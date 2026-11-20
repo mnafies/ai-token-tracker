@@ -2,8 +2,10 @@ pub mod adapters;
 pub mod db;
 pub mod ingest;
 pub mod model;
+pub mod period;
 pub mod pricing;
 pub mod project;
+pub mod query;
 pub mod watcher;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
