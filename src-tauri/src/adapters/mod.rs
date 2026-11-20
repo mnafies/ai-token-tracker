@@ -17,8 +17,11 @@ impl Default for SourceState {
 
 pub mod claude_code;
 pub mod codex;
+pub mod copilot;
+pub mod gemini;
 pub mod jsonl;
 pub mod opencode;
+pub mod presence;
 
 use crate::model::{AgentKind, ParseOutput};
 use std::path::{Path, PathBuf};
@@ -50,7 +53,9 @@ pub fn adapter_for(kind: AgentKind, root: PathBuf) -> Box<dyn Adapter> {
         AgentKind::ClaudeCode => Box::new(claude_code::ClaudeCodeAdapter { root }),
         AgentKind::Codex => Box::new(codex::CodexAdapter { root }),
         AgentKind::OpenCode => Box::new(opencode::OpenCodeAdapter { root }),
-        _ => unimplemented!("adapter for {kind:?} is added in a later task"),
+        AgentKind::GeminiCli => Box::new(gemini::GeminiAdapter { root }),
+        AgentKind::CopilotCli => Box::new(copilot::CopilotAdapter { root }),
+        AgentKind::ClaudeDesktop | AgentKind::VsCode => Box::new(presence::PresenceAdapter { kind, root }),
     }
 }
 
@@ -59,6 +64,10 @@ pub fn default_adapters(home: &Path) -> Vec<Box<dyn Adapter>> {
         adapter_for(AgentKind::ClaudeCode, home.join(".claude")),
         adapter_for(AgentKind::Codex, home.join(".codex")),
         adapter_for(AgentKind::OpenCode, home.join(".local/share/opencode")),
+        adapter_for(AgentKind::GeminiCli, home.join(".gemini")),
+        adapter_for(AgentKind::CopilotCli, home.join(".copilot")),
+        adapter_for(AgentKind::ClaudeDesktop, home.join("Library/Application Support/Claude")),
+        adapter_for(AgentKind::VsCode, home.join("Library/Application Support/Code")),
     ]
 }
 
@@ -77,6 +86,24 @@ pub fn truncate_title(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_adapters_has_seven_kinds() {
+        let kinds: Vec<AgentKind> =
+            default_adapters(Path::new("/h")).iter().map(|a| a.kind()).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                AgentKind::ClaudeCode,
+                AgentKind::Codex,
+                AgentKind::OpenCode,
+                AgentKind::GeminiCli,
+                AgentKind::CopilotCli,
+                AgentKind::ClaudeDesktop,
+                AgentKind::VsCode
+            ]
+        );
+    }
 
     #[test]
     fn truncate_title_limits_to_80_chars() {
