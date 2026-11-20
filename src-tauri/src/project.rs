@@ -31,7 +31,9 @@ pub fn resolve_project(cwd: &Path) -> ResolvedProject {
             let root = std::fs::read_to_string(&dot_git)
                 .ok()
                 .and_then(|s| {
-                    let gitdir = s.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim().to_string();
+                    let gitdir = s.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
+                    // A relative gitdir is relative to the directory holding the `.git` file.
+                    let gitdir = cur.join(gitdir).to_string_lossy().into_owned();
                     let idx = gitdir.find("/.git/worktrees/")?;
                     Some(PathBuf::from(&gitdir[..idx]))
                 })
@@ -109,6 +111,19 @@ mod tests {
         fs::create_dir_all(&wt).unwrap();
         fs::write(wt.join(".git"), format!("gitdir: {}/.git/worktrees/wt\n", main.display())).unwrap();
         let r = resolve_project(&wt);
+        assert_eq!(r.project_key, canon_s(&main));
+        assert!(r.is_git);
+    }
+
+    #[test]
+    fn relative_gitdir_resolves_against_the_dot_git_file() {
+        let t = tempfile::tempdir().unwrap();
+        let main = t.path().join("main");
+        fs::create_dir_all(main.join(".git/worktrees/wt")).unwrap();
+        let wt = t.path().join("wt");
+        fs::create_dir_all(wt.join("sub")).unwrap();
+        fs::write(wt.join(".git"), "gitdir: ../main/.git/worktrees/wt\n").unwrap();
+        let r = resolve_project(&wt.join("sub"));
         assert_eq!(r.project_key, canon_s(&main));
         assert!(r.is_git);
     }

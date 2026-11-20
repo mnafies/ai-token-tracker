@@ -1,26 +1,26 @@
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
 
 /// Reads complete (newline-terminated) lines starting at `offset`.
-/// Returns the lines (without the trailing newline) and the new offset.
+/// Returns the lines (without the trailing newline) and the new offset, which only moves
+/// past complete lines; a trailing line without a newline is left for the next read.
 pub fn read_complete_lines(path: &Path, offset: u64) -> std::io::Result<(Vec<String>, u64)> {
-    let mut f = File::open(path)?;
-    f.seek(SeekFrom::Start(offset))?;
+    let mut r = BufReader::new(File::open(path)?);
+    r.seek(SeekFrom::Start(offset))?;
+    let mut lines = Vec::new();
+    let mut end = offset;
     let mut buf = Vec::new();
-    f.read_to_end(&mut buf)?;
-    let end = match buf.iter().rposition(|&b| b == b'\n') {
-        Some(i) => i + 1,
-        None => return Ok((Vec::new(), offset)),
-    };
-    let lines = buf[..end]
-        .split(|&b| b == b'\n')
-        .map(|l| String::from_utf8_lossy(l).trim_end_matches('\r').to_string())
-        .collect::<Vec<_>>();
-    // split yields a trailing empty piece after the final '\n'
-    let mut lines = lines;
-    lines.pop();
-    Ok((lines, offset + end as u64))
+    loop {
+        buf.clear();
+        let n = r.read_until(b'\n', &mut buf)?;
+        if buf.pop() != Some(b'\n') {
+            break; // EOF, possibly after a partial line
+        }
+        end += n as u64;
+        lines.push(String::from_utf8_lossy(&buf).trim_end_matches('\r').to_string());
+    }
+    Ok((lines, end))
 }
 
 #[cfg(test)]
@@ -35,5 +35,34 @@ mod tests {
         let (lines, off) = read_complete_lines(&p, 0).unwrap();
         assert_eq!(lines, vec!["a", "b"]);
         assert_eq!(off, 4);
+    }
+
+    #[test]
+    fn read_complete_lines_streams_a_large_file_from_an_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("big.jsonl");
+        let line = format!("{{\"pad\":\"{}\"}}", "x".repeat(200));
+        let mut body = String::new();
+        for i in 0..20_000 {
+            body.push_str(&format!("{line}{i}\r\n"));
+        }
+        body.push_str("partial-without-newline");
+        std::fs::write(&p, &body).unwrap();
+        let full = (body.len() - "partial-without-newline".len()) as u64;
+
+        let (lines, off) = read_complete_lines(&p, 0).unwrap();
+        assert_eq!(lines.len(), 20_000);
+        assert_eq!(lines[19_999], format!("{line}19999"));
+        assert_eq!(off, full);
+
+        let first = (line.len() + 3) as u64; // "<line>0\r\n"
+        let (lines, off) = read_complete_lines(&p, first).unwrap();
+        assert_eq!(lines.len(), 19_999);
+        assert_eq!(lines[0], format!("{line}1"));
+        assert_eq!(off, full);
+
+        let (lines, off) = read_complete_lines(&p, full).unwrap();
+        assert!(lines.is_empty());
+        assert_eq!(off, full);
     }
 }

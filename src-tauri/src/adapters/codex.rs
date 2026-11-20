@@ -10,8 +10,10 @@ pub struct CodexAdapter {
 
 fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
-    for path in rd.filter_map(|e| e.ok().map(|e| e.path())) {
-        if path.is_dir() {
+    for entry in rd.filter_map(Result::ok) {
+        let path = entry.path();
+        // file_type() does not follow symlinks, so a linked directory (or a loop) is not walked.
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
             collect_jsonl(&path, out);
         } else if path.is_file() && path.extension().is_some_and(|e| e == "jsonl") {
             out.push(path);
@@ -220,6 +222,22 @@ mod tests {
 
     fn parse_all() -> ParseOutput {
         adapter().parse(&fixture(), &SourceState::default()).unwrap().0
+    }
+
+    #[test]
+    fn sources_do_not_follow_symlinked_directories() {
+        let t = tempfile::tempdir().unwrap();
+        let day = t.path().join("sessions/2026/11/20");
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::write(day.join("rollout-a.jsonl"), "").unwrap();
+        let outside = t.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("rollout-b.jsonl"), "").unwrap();
+        std::os::unix::fs::symlink(&outside, t.path().join("sessions/link")).unwrap();
+        std::os::unix::fs::symlink(t.path().join("sessions"), day.join("loop")).unwrap();
+        let a = CodexAdapter { root: t.path().to_path_buf() };
+        let paths: Vec<PathBuf> = a.sources().into_iter().map(|s| s.path).collect();
+        assert_eq!(paths, vec![day.join("rollout-a.jsonl")]);
     }
 
     #[test]
