@@ -112,11 +112,11 @@ impl Db {
         Ok(())
     }
 
-    /// Delete all rows except settings.
+    /// Delete all rows except user configuration (settings, model_overrides).
     pub fn wipe_all(&mut self) -> Result<()> {
         let tx = self.conn.transaction()?;
         for t in [
-            "events", "sessions", "cwd_projects", "source_state", "prices", "model_overrides", "resolved_prices",
+            "events", "sessions", "cwd_projects", "source_state", "prices", "resolved_prices",
             "app_meta", "discovery_candidates", "discovery_denied", "project_footprints",
         ] {
             tx.execute(&format!("DELETE FROM {t}"), [])?;
@@ -192,5 +192,7 @@ mod tests {
         let e: i64 = db.conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap();
         let s: i64 = db.conn.query_row("SELECT COUNT(*) FROM settings", [], |r| r.get(0)).unwrap();
         assert_eq!((e, s), (0, 1));
+        let m: i64 = db.conn.query_row("SELECT COUNT(*) FROM model_overrides", [], |r| r.get(0)).unwrap();
+        assert_eq!(m, 2);
     }
 }
