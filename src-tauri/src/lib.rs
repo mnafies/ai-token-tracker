@@ -13,6 +13,7 @@ pub mod query;
 pub mod services;
 pub mod settings;
 pub mod state;
+pub mod tray;
 pub mod watcher;
 
 use adapters::Adapter;
@@ -117,6 +118,7 @@ pub fn run() {
                 let enabled = app.state::<AppState>().settings().launch_at_login;
                 commands::sync_autostart(app.handle(), enabled);
             }
+            tray::setup_tray(app.handle())?;
             services::start(app.handle());
             Ok(())
         })

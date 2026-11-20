@@ -13,6 +13,7 @@ use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const DATA_UPDATED: &str = "data-updated";
+const TRAY_INTERVAL: Duration = Duration::from_secs(30);
 const HEARTBEAT: Duration = Duration::from_secs(5 * 60);
 const PRICE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// How often the price loop wakes to check whether 24 h (wall clock) have passed.
@@ -45,6 +46,20 @@ pub fn emit_updated(app: &AppHandle) {
     if let Err(e) = app.emit(DATA_UPDATED, ()) {
         eprintln!("emit {DATA_UPDATED}: {e}");
     }
+    if let Err(e) = crate::tray::refresh_tray(app) {
+        eprintln!("tray refresh: {e}");
+    }
+}
+
+/// Refreshes model prices off the calling thread (tray menu action).
+pub fn spawn_price_refresh(app: &AppHandle) {
+    spawn(app, "price-refresh", |app| {
+        let st = app.state::<AppState>().refresh_prices(&fetch_models);
+        if let Some(e) = &st.last_error {
+            eprintln!("price refresh: {e}");
+        }
+        emit_updated(&app);
+    });
 }
 
 /// Spawns a named thread; a panic in `f` is logged rather than lost with the thread.
@@ -67,6 +82,18 @@ pub fn start(app: &AppHandle) {
     spawn(app, "process-poll", |app| process_poll(&app));
     spawn(app, "prices", |app| price_loop(&app));
     spawn(app, "heartbeat", |app| heartbeat(&app));
+    spawn(app, "tray", |app| tray_timer(&app));
+}
+
+fn tray_timer(app: &AppHandle) {
+    loop {
+        std::thread::sleep(TRAY_INTERVAL);
+        run_guarded("tray", || {
+            if let Err(e) = crate::tray::refresh_tray(app) {
+                eprintln!("tray refresh: {e}");
+            }
+        });
+    }
 }
 
 fn startup(app: &AppHandle) {
