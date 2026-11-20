@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getSettings } from "./api";
+import ErrorBox from "./components/ErrorBox";
 import { DEFAULT_SETTINGS, SettingsContext } from "./nav";
 import type { NavParams, Page } from "./nav";
 import Agents from "./pages/Agents";
@@ -33,6 +34,7 @@ export default function App() {
   const [nav, setNav] = useState<{ page: Page; params: NavParams }>({ page: "dashboard", params: {} });
   const [refreshKey, setRefreshKey] = useState(0);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -45,7 +47,12 @@ export default function App() {
 
   // Settings load once and again after every data-updated (update_settings emits it).
   useEffect(() => {
-    getSettings().then(setSettings).catch((e) => console.error("get_settings:", e));
+    let cancelled = false;
+    getSettings().then(
+      (s) => { if (!cancelled) { setSettings(s); setSettingsError(null); } },
+      (e) => { if (!cancelled) setSettingsError(`Gagal memuat pengaturan: ${e}`); },
+    );
+    return () => { cancelled = true; };
   }, [refreshKey]);
 
   const navigate = useCallback((page: Page, params: NavParams = {}) => setNav({ page, params }), []);
@@ -63,6 +70,7 @@ export default function App() {
           ))}
         </nav>
         <main className="content">
+          <ErrorBox message={settingsError} />
           <Current refreshKey={refreshKey} params={nav.params} navigate={navigate} />
         </main>
       </div>

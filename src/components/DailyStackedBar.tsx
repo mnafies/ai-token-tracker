@@ -2,8 +2,7 @@ import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAx
 import { useSettings } from "../nav";
 import { formatMoney } from "../lib/format";
 
-export interface StackRow { label: string; [series: string]: number | string }
-export interface StackSeries { key: string; name: string; color: string }
+import type { StackRow, StackSeries } from "../lib/chart";
 
 /** Stacked bar chart of cost (USD) per label, one segment per series. */
 export default function DailyStackedBar({ rows, series, height = 280 }: { rows: StackRow[]; series: StackSeries[]; height?: number }) {
@@ -18,6 +17,7 @@ export default function DailyStackedBar({ rows, series, height = 280 }: { rows: 
           <YAxis tick={{ fill: "var(--muted)", fontSize: 11 }} stroke="var(--border)" width={56}
             tickFormatter={(v: number) => formatMoney(v, s)} />
           <Tooltip
+            filterNull
             formatter={(v, name) => [formatMoney(Number(v), s), String(name)]}
             contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text)" }}
             cursor={{ fill: "var(--hover)" }} />

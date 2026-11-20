@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { customRange } from "../lib/range";
 import type { PeriodSpec } from "../types";
 
 const OPTIONS: { kind: Exclude<PeriodSpec["kind"], "custom">; label: string }[] = [
@@ -9,23 +10,16 @@ const OPTIONS: { kind: Exclude<PeriodSpec["kind"], "custom">; label: string }[] 
   { kind: "lastMonth", label: "Bulan lalu" },
 ];
 
-/** "YYYY-MM-DD" -> epoch ms at local midnight. */
-function localMidnight(date: string): number {
-  const [y, m, d] = date.split("-").map(Number);
-  return new Date(y, m - 1, d).getTime();
-}
-
 export default function PeriodPicker({ value, onChange }: { value: PeriodSpec; onChange: (p: PeriodSpec) => void }) {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
+  const [touched, setTouched] = useState(false);
 
-  // Both dates are inclusive; the range ends at local midnight after the end date.
   const apply = (s: string, e: string) => {
-    if (!s || !e) return;
-    const startMs = localMidnight(s);
-    const endMs = new Date(localMidnight(e) + 36 * 3600 * 1000).setHours(0, 0, 0, 0);
-    if (endMs > startMs) onChange({ kind: "custom", startMs, endMs });
+    const r = customRange(s, e);
+    if (r) onChange(r);
   };
+  const hint = !touched ? null : !start || !end ? "Isi tanggal awal dan akhir untuk periode custom." : start > end ? "Tanggal awal harus sebelum tanggal akhir." : null;
 
   return (
     <div className="period-picker">
@@ -35,15 +29,16 @@ export default function PeriodPicker({ value, onChange }: { value: PeriodSpec; o
             {o.label}
           </button>
         ))}
-        <button className={value.kind === "custom" ? "active" : ""} onClick={() => apply(start, end)}>Custom</button>
+        <button className={value.kind === "custom" ? "active" : ""} onClick={() => { setTouched(true); apply(start, end); }}>Custom</button>
       </div>
       <div className="custom-range">
         <input type="date" aria-label="Tanggal awal" value={start}
-          onChange={(e) => { setStart(e.target.value); apply(e.target.value, end); }} />
+          onChange={(e) => { setTouched(true); setStart(e.target.value); apply(e.target.value, end); }} />
         <span className="muted">–</span>
         <input type="date" aria-label="Tanggal akhir" value={end}
-          onChange={(e) => { setEnd(e.target.value); apply(start, e.target.value); }} />
+          onChange={(e) => { setTouched(true); setEnd(e.target.value); apply(start, e.target.value); }} />
       </div>
+    {hint && <div className="muted small hint">{hint}</div>}
     </div>
   );
 }

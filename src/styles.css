@@ -80,3 +80,4 @@ input[type="date"] {
 @media (max-width: 760px) {
   .grid-3, .grid-2 { grid-template-columns: 1fr; }
 }
+.hint { width: 100%; }

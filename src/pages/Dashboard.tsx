@@ -2,20 +2,18 @@ import { useMemo, useState } from "react";
 import { getAppStatus, getOverview, listAgents } from "../api";
 import CostCell from "../components/CostCell";
 import DailyStackedBar from "../components/DailyStackedBar";
-import type { StackRow } from "../components/DailyStackedBar";
+import type { StackRow } from "../lib/chart";
 import DataTable from "../components/DataTable";
 import ErrorBox from "../components/ErrorBox";
 import PeriodPicker from "../components/PeriodPicker";
 import StatCard from "../components/StatCard";
 import { agentColor } from "../lib/colors";
-import { formatDateTime, formatMoney, formatPct, formatTokens } from "../lib/format";
+import { formatDateTime, formatPct, formatTokens } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
-import { useSettings } from "../nav";
 import type { PageProps } from "../nav";
 import type { PeriodSpec } from "../types";
 
 export default function Dashboard({ refreshKey, navigate }: PageProps) {
-  const settings = useSettings();
   const [period, setPeriod] = useState<PeriodSpec>({ kind: "thisMonth" });
   const overview = useAsync(() => getOverview(period), [period, refreshKey]);
   const status = useAsync(getAppStatus, [refreshKey]);
@@ -27,7 +25,7 @@ export default function Dashboard({ refreshKey, navigate }: PageProps) {
     const keys = new Set<string>();
     const rows = o.daily.map((d) => {
       const row: StackRow = { label: d.date.slice(5) };
-      for (const a of d.byAgent) { row[a.agent] = a.costUsd; keys.add(a.agent); }
+      for (const a of d.byAgent) { if (a.costUsd > 0) { row[a.agent] = a.costUsd; keys.add(a.agent); } }
       return row;
     });
     const series = [...keys].sort().map((k) => ({ key: k, name: k, color: agentColor(k) }));
@@ -61,7 +59,7 @@ export default function Dashboard({ refreshKey, navigate }: PageProps) {
         <>
           <div className="grid-3">
             <StatCard label="Biaya"
-              value={o.totals.costUsd === 0 && o.totals.unpricedTokens > 0 ? "—" : formatMoney(o.totals.costUsd, settings)}
+              value={<CostCell usd={o.totals.costUsd} unpriced={o.totals.unpricedTokens} />}
               sub={<>{formatPct(o.changePct)} <span className="muted">vs periode sebelumnya</span></>} />
             <StatCard label="Token" value={formatTokens(o.totals.tokens)}
               sub={`${o.totals.events} permintaan`} />
@@ -72,6 +70,9 @@ export default function Dashboard({ refreshKey, navigate }: PageProps) {
           <section className="card">
             <h2>Biaya harian per agent</h2>
             <DailyStackedBar rows={chart.rows} series={chartSeries} />
+            {o.totals.unpricedTokens > 0 && (
+              <p className="muted small">+ {formatTokens(o.totals.unpricedTokens)} token tanpa harga (lihat halaman Harga)</p>
+            )}
           </section>
 
           <div className="grid-2">
