@@ -18,6 +18,7 @@ impl Default for SourceState {
 pub mod claude_code;
 pub mod codex;
 pub mod jsonl;
+pub mod opencode;
 
 use crate::model::{AgentKind, ParseOutput};
 use std::path::{Path, PathBuf};
@@ -48,6 +49,7 @@ pub fn adapter_for(kind: AgentKind, root: PathBuf) -> Box<dyn Adapter> {
     match kind {
         AgentKind::ClaudeCode => Box::new(claude_code::ClaudeCodeAdapter { root }),
         AgentKind::Codex => Box::new(codex::CodexAdapter { root }),
+        AgentKind::OpenCode => Box::new(opencode::OpenCodeAdapter { root }),
         _ => unimplemented!("adapter for {kind:?} is added in a later task"),
     }
 }
@@ -56,6 +58,7 @@ pub fn default_adapters(home: &Path) -> Vec<Box<dyn Adapter>> {
     vec![
         adapter_for(AgentKind::ClaudeCode, home.join(".claude")),
         adapter_for(AgentKind::Codex, home.join(".codex")),
+        adapter_for(AgentKind::OpenCode, home.join(".local/share/opencode")),
     ]
 }
 
