@@ -26,6 +26,7 @@ pub struct AgentCost {
     pub agent: String,
     pub cost_usd: f64,
     pub tokens: i64,
+    pub unpriced_tokens: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -221,7 +222,8 @@ pub fn overview(db: &Db, spec: &PeriodSpec, now: DateTime<FixedOffset>) -> anyho
 /// One point per local day in the range, including empty days.
 pub fn daily(db: &Db, r: &PeriodRange, now: DateTime<FixedOffset>) -> anyhow::Result<Vec<DailyPoint>> {
     let sql = format!(
-        "{} SELECT date(ts_ms/1000 + ?3, 'unixepoch') AS d, agent, COALESCE(SUM(cost), 0), SUM(tokens)
+        "{} SELECT date(ts_ms/1000 + ?3, 'unixepoch') AS d, agent, COALESCE(SUM(cost), 0), SUM(tokens),
+           COALESCE(SUM(CASE WHEN cost IS NULL THEN tokens END), 0)
          FROM ev WHERE {IN_RANGE} GROUP BY d, agent ORDER BY d, agent",
         ev_cte()
     );
@@ -229,7 +231,12 @@ pub fn daily(db: &Db, r: &PeriodRange, now: DateTime<FixedOffset>) -> anyhow::Re
     let mut stmt = db.conn.prepare(&sql)?;
     let mut rows = stmt.query(params![r.start_ms, r.end_ms, now.offset().local_minus_utc()])?;
     while let Some(row) = rows.next()? {
-        by_day.entry(row.get(0)?).or_default().push(AgentCost { agent: row.get(1)?, cost_usd: row.get(2)?, tokens: row.get(3)? });
+        by_day.entry(row.get(0)?).or_default().push(AgentCost {
+            agent: row.get(1)?,
+            cost_usd: row.get(2)?,
+            tokens: row.get(3)?,
+            unpriced_tokens: row.get(4)?,
+        });
     }
     let mut out = Vec::new();
     if r.end_ms <= r.start_ms {
@@ -593,6 +600,21 @@ mod tests {
         assert!(o.daily.iter().filter(|d| d.date != "2026-11-21").all(|d| d.by_agent.is_empty()));
         let last_week = resolve(&PeriodSpec::LastWeek, now());
         assert_eq!(totals(&db, &last_week).unwrap().events, 0);
+    }
+
+    #[test]
+    fn daily_reports_unpriced_tokens_per_agent() {
+        let db = Db::open_in_memory().unwrap();
+        flat_price(&db, "m");
+        insert(&db, Ev { key: "a", input: 1_000_000, ..Default::default() });
+        insert(&db, Ev { key: "b", model: "u", input: 300, output: 200, ..Default::default() });
+        insert(&db, Ev { key: "c", agent: "codex", model: "u", input: 50, ..Default::default() });
+        let days = daily(&db, &this_week(), now()).unwrap();
+        let wed = days.iter().find(|d| d.date == "2026-11-18").unwrap();
+        let by: Vec<(&str, i64, i64)> = wed.by_agent.iter().map(|a| (a.agent.as_str(), a.tokens, a.unpriced_tokens)).collect();
+        assert_eq!(by, vec![("claude-code", 1_000_500, 500), ("codex", 50, 50)]);
+        approx(wed.by_agent[0].cost_usd, 1.0);
+        assert_eq!(wed.by_agent[1].cost_usd, 0.0);
     }
 
     #[test]

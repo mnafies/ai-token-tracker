@@ -17,8 +17,9 @@ fn time(ms: Option<i64>) -> String {
         .unwrap_or_default()
 }
 
-fn usd(v: f64) -> String {
-    format!("{v:.6}")
+/// Cost cell; empty when the cost is all unpriced, so it never reads as $0.
+fn cost(usd: f64, unpriced_tokens: i64) -> String {
+    if usd == 0.0 && unpriced_tokens > 0 { String::new() } else { format!("{usd:.6}") }
 }
 
 pub fn sessions_csv(rows: &[SessionRow]) -> String {
@@ -33,7 +34,7 @@ pub fn sessions_csv(rows: &[SessionRow]) -> String {
             time(r.updated_ms),
             field(&r.models.join(";")),
             r.tokens.to_string(),
-            usd(r.cost_usd),
+            cost(r.cost_usd, r.unpriced_tokens),
             r.unpriced_tokens.to_string(),
         ];
         out.push_str(&cols.join(","));
@@ -43,10 +44,17 @@ pub fn sessions_csv(rows: &[SessionRow]) -> String {
 }
 
 pub fn daily_csv(points: &[DailyPoint]) -> String {
-    let mut out = String::from("date,agent,cost_usd,tokens\n");
+    let mut out = String::from("date,agent,cost_usd,tokens,unpriced_tokens\n");
     for p in points {
         for a in &p.by_agent {
-            out.push_str(&format!("{},{},{},{}\n", field(&p.date), field(&a.agent), usd(a.cost_usd), a.tokens));
+            out.push_str(&format!(
+                "{},{},{},{},{}\n",
+                field(&p.date),
+                field(&a.agent),
+                cost(a.cost_usd, a.unpriced_tokens),
+                a.tokens,
+                a.unpriced_tokens
+            ));
         }
     }
     out
@@ -99,18 +107,35 @@ mod tests {
 
     #[test]
     fn daily_csv_one_row_per_agent_per_day() {
-        let ac = |agent: &str, cost: f64, tokens: i64| AgentCost { agent: agent.into(), cost_usd: cost, tokens };
+        let ac = |agent: &str, cost: f64, tokens: i64, unpriced: i64| AgentCost {
+            agent: agent.into(),
+            cost_usd: cost,
+            tokens,
+            unpriced_tokens: unpriced,
+        };
         let points = vec![
-            DailyPoint { date: "2026-11-19".into(), by_agent: vec![ac("claude-code", 1.25, 100), ac("codex", 0.5, 50)] },
+            DailyPoint { date: "2026-11-19".into(), by_agent: vec![ac("claude-code", 1.25, 100, 0), ac("codex", 0.5, 50, 20)] },
             DailyPoint { date: "2026-11-20".into(), by_agent: vec![] },
-            DailyPoint { date: "2026-11-21".into(), by_agent: vec![ac("codex", 2.0, 10)] },
+            DailyPoint { date: "2026-11-21".into(), by_agent: vec![ac("codex", 2.0, 10, 0), ac("gemini", 0.0, 40, 40)] },
         ];
         assert_eq!(
             daily_csv(&points),
-            "date,agent,cost_usd,tokens\n\
-             2026-11-19,claude-code,1.250000,100\n\
-             2026-11-19,codex,0.500000,50\n\
-             2026-11-21,codex,2.000000,10\n"
+            "date,agent,cost_usd,tokens,unpriced_tokens\n\
+             2026-11-19,claude-code,1.250000,100,0\n\
+             2026-11-19,codex,0.500000,50,20\n\
+             2026-11-21,codex,2.000000,10,0\n\
+             2026-11-21,gemini,,40,40\n"
         );
+    }
+
+    #[test]
+    fn sessions_csv_leaves_cost_empty_when_only_unpriced() {
+        let mut r = row("t");
+        r.cost_usd = 0.0;
+        let csv = sessions_csv(&[r.clone()]);
+        assert!(csv.lines().nth(1).unwrap().ends_with(",1234,,7"), "{csv}");
+        r.unpriced_tokens = 0;
+        let csv = sessions_csv(&[r]);
+        assert!(csv.lines().nth(1).unwrap().ends_with(",1234,0.000000,0"), "{csv}");
     }
 }

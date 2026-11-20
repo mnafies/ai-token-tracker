@@ -26,7 +26,7 @@ export interface Totals {
   events: number;
 }
 
-export interface AgentCost { agent: string; costUsd: number; tokens: number }
+export interface AgentCost { agent: string; costUsd: number; tokens: number; unpricedTokens: number }
 export interface DailyPoint { date: string; byAgent: AgentCost[] }
 
 export interface ProjectRow {
