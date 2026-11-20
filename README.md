@@ -12,15 +12,21 @@ Aplikasi macOS (Tauri v2: Rust + React/TypeScript) yang melacak pemakaian token 
 
 ## Agen yang didukung
 
-Dilacak penuh (token dan biaya):
+Token penuh (token dan biaya):
 
 - Claude Code (`~/.claude`)
 - Codex (`~/.codex`)
 - opencode (`~/.local/share/opencode`)
+
+Sesi (token jika tercatat):
+
 - Gemini CLI (`~/.gemini`)
+
+Sesi saja (tanpa data token):
+
 - Copilot CLI (`~/.copilot`)
 
-Hanya terdeteksi keberadaannya (tanpa data token):
+Deteksi saja (hanya terdeteksi keberadaannya, tanpa sesi atau token):
 
 - Claude Desktop (`~/Library/Application Support/Claude`)
 - VS Code (`~/Library/Application Support/Code`)
