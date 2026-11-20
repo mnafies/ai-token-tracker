@@ -94,7 +94,10 @@ fn ingest_source(db: &Mutex<Db>, a: &dyn Adapter, src: &Source) -> anyhow::Resul
         Some(p) => p,
         None => SourceState::default(),
     };
-    let (out, state) = a.parse(src, &prev)?;
+    let (out, parsed) = a.parse(src, &prev)?;
+    // Persist the pre-parse fingerprint: if the source grew while we parsed, the next
+    // ingest sees a mismatch and reads the rest instead of skipping it forever.
+    let state = SourceState { size, mtime_ms, ..parsed };
     let mut guard = lock(db)?;
     guard.apply_parse(&path, a.kind(), &out, &state)?;
     ensure_cwd_projects(&guard, &cwds_of(&out))?;
@@ -293,5 +296,59 @@ mod tests {
         let db = db();
         run(&db, a.as_ref());
         assert_eq!(count(&db, "SELECT COUNT(*) FROM cwd_projects WHERE cwd = '/tmp/demo'"), 1);
+    }
+
+    /// Wraps a real adapter; after its parse, appends one line to the source (once)
+    /// and reports the post-growth size/mtime, mimicking a write landing mid-parse.
+    struct GrowingAdapter {
+        inner: Box<dyn Adapter>,
+        grown: std::sync::atomic::AtomicBool,
+    }
+
+    impl Adapter for GrowingAdapter {
+        fn kind(&self) -> AgentKind {
+            self.inner.kind()
+        }
+        fn root(&self) -> &Path {
+            self.inner.root()
+        }
+        fn detect(&self) -> bool {
+            self.inner.detect()
+        }
+        fn sources(&self) -> Vec<Source> {
+            self.inner.sources()
+        }
+        fn parse(&self, src: &Source, prev: &SourceState) -> anyhow::Result<(ParseOutput, SourceState)> {
+            let (out, mut state) = self.inner.parse(src, prev)?;
+            if src.path.ends_with("sess-1.jsonl") && !self.grown.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                append(&src.path, &format!("{}\n", assistant_line("msg_NEW")));
+                let meta = fs::metadata(&src.path)?;
+                state.size = meta.len();
+                state.mtime_ms = mtime_ms(&meta);
+            }
+            Ok((out, state))
+        }
+    }
+
+    #[test]
+    fn growth_during_parse_is_read_next_time() {
+        let t = temp_root("claude");
+        let path = claude_session(t.path());
+        let pre_parse_size = fs::metadata(&path).unwrap().len();
+        let growing = GrowingAdapter {
+            inner: adapter_for(AgentKind::ClaudeCode, t.path().to_path_buf()),
+            grown: false.into(),
+        };
+        let db = db();
+        run(&db, &growing);
+        let before = events(&db);
+        let stored = db.lock().unwrap().source_state(&path.to_string_lossy()).unwrap().unwrap();
+        assert_eq!(stored.size, pre_parse_size);
+        assert!(fs::metadata(&path).unwrap().len() > pre_parse_size);
+
+        let a = adapter_for(AgentKind::ClaudeCode, t.path().to_path_buf());
+        let r = run(&db, a.as_ref());
+        assert_eq!(r.sources_read, 1);
+        assert_eq!(events(&db), before + 1);
     }
 }
