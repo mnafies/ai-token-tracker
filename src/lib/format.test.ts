@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { costLabel, formatDuration, formatMoney, formatPct, formatPer1M, formatTokens, priceStatusLabel, projectName } from "./format";
+import { costLabel, formatDuration, formatMoney, formatPct, formatPer1M, formatTokens, per1MToPerToken, perTokenToPer1M, priceStatusLabel, projectName } from "./format";
 import type { Settings } from "../types";
 
 const base: Settings = { currency: "usd", idrRate: null, launchAtLogin: true, processPollSecs: 5, scanRoots: [] };
@@ -60,4 +60,16 @@ test("projectName is the last path segment", () => {
   expect(projectName("/a/b/proj/")).toBe("proj");
   expect(projectName("/")).toBe("/");
   expect(projectName("plain")).toBe("plain");
+});
+
+test("per1MToPerToken divides by one million", () => {
+  expect(per1MToPerToken(3)).toBe(0.000003);
+  expect(per1MToPerToken(0)).toBe(0);
+});
+
+test("perTokenToPer1M trims float noise to 4 decimals", () => {
+  expect(perTokenToPer1M(0.000003)).toBe("3");
+  expect(perTokenToPer1M(1.5e-7)).toBe("0.15");
+  expect(perTokenToPer1M(0.0000012345678)).toBe("1.2346");
+  expect(perTokenToPer1M(0.1 * 3 / 1e6)).toBe("0.3");
 });

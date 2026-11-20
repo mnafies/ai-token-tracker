@@ -71,3 +71,13 @@ export function priceStatusLabel(status: string): string {
 export function formatPer1M(perToken: number | null): string {
   return perToken == null ? "—" : `$${(perToken * 1e6).toFixed(2)}`;
 }
+
+/** UI price per 1M tokens → per-token price (backend unit). */
+export function per1MToPerToken(per1M: number): number {
+  return per1M / 1e6;
+}
+
+/** Per-token price → UI string per 1M tokens, up to 4 decimals, trailing zeros trimmed. */
+export function perTokenToPer1M(perToken: number): string {
+  return String(Number((perToken * 1e6).toFixed(4)));
+}
