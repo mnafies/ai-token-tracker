@@ -53,9 +53,7 @@ pub fn scan_footprints(roots: &[PathBuf], home: &Path, cancel: &AtomicBool) -> (
                 let Some(up) = folder.parent() else { return true };
                 folder = up;
             }
-            if folder == home && matches!(name.as_ref(), ".claude" | ".codex" | ".gemini") {
-                return false;
-            }
+            // Home-level .claude/.codex/.gemini never reach here: home dot-dirs are pruned above.
             found.insert(Footprint {
                 project_key: resolve_project(folder).project_key,
                 agent: agent.to_string(),

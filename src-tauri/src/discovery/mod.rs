@@ -13,6 +13,9 @@ pub fn run_discovery(db: &Mutex<Db>, roots: &[PathBuf], home: &Path, known_roots
     let (candidates, mut denied) = data_scan::scan_data(roots, home, known_roots, cancel);
     let (footprints, denied2) = footprint::scan_footprints(roots, home, cancel);
     denied.extend(denied2);
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(()); // partial scan: keep previous results untouched
+    }
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -223,5 +226,85 @@ mod tests {
         assert_eq!(ads.len(), 1);
         assert_eq!(ads[0].kind(), crate::model::AgentKind::ClaudeCode);
         assert_eq!(canon(ads[0].root()), canon(&home.join("alt-claude")));
+    }
+
+    fn names(dir: &std::path::Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn cancelled_run_keeps_previous_results() {
+        let (t, db) = setup_db_with_claude_dir();
+        let home = t.path();
+        fs::create_dir_all(home.join("repo/.git")).unwrap();
+        write(&home.join("repo/CLAUDE.md"), "x");
+        run_discovery(&db, &[home.to_path_buf()], home, &[], &no_cancel()).unwrap();
+        let count = |sql: &str| -> i64 { db.lock().unwrap().conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        let (f, c) = (count("SELECT COUNT(*) FROM project_footprints"), count("SELECT COUNT(*) FROM discovery_candidates"));
+        assert!(f >= 1 && c >= 1);
+        db.lock().unwrap().conn.execute("INSERT INTO discovery_denied (path, found_ms) VALUES ('/x', 1)", []).unwrap();
+        run_discovery(&db, &[home.to_path_buf()], home, &[], &AtomicBool::new(true)).unwrap();
+        assert_eq!(count("SELECT COUNT(*) FROM project_footprints"), f);
+        assert_eq!(count("SELECT COUNT(*) FROM discovery_candidates"), c);
+        assert_eq!(count("SELECT COUNT(*) FROM discovery_denied"), 1);
+    }
+
+    #[test]
+    fn sqlite_sniff_creates_no_side_files() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("w.db");
+        {
+            let c = rusqlite::Connection::open(&p).unwrap();
+            c.query_row("PRAGMA journal_mode=WAL", [], |r| r.get::<_, String>(0)).unwrap();
+            c.execute_batch("CREATE TABLE u(input_tokens INTEGER); INSERT INTO u VALUES (1);").unwrap();
+        }
+        let _ = fs::remove_file(t.path().join("w.db-shm"));
+        let _ = fs::remove_file(t.path().join("w.db-wal"));
+        let before = names(t.path());
+        assert!(sniff_file(&p).is_some());
+        assert_eq!(names(t.path()), before);
+    }
+
+    #[test]
+    fn sniff_sqlite_opencode_tokens_and_bad_header() {
+        let t = tempfile::tempdir().unwrap();
+        let oc = t.path().join("opencode.db");
+        rusqlite::Connection::open(&oc)
+            .unwrap()
+            .execute_batch("CREATE TABLE session_message(id TEXT); CREATE TABLE session_v2(id TEXT);")
+            .unwrap();
+        assert_eq!(sniff_file(&oc).unwrap().known_format, Some(crate::model::AgentKind::OpenCode));
+        let tk = t.path().join("tok.sqlite");
+        rusqlite::Connection::open(&tk).unwrap().execute_batch("CREATE TABLE m(id TEXT, total_tokens INTEGER);").unwrap();
+        let s = sniff_file(&tk).unwrap();
+        assert_eq!(s.known_format, None);
+        let plain = t.path().join("fake.db");
+        write(&plain, "this is not sqlite at all");
+        assert!(sniff_file(&plain).is_none());
+    }
+
+    #[test]
+    fn scan_data_groups_codex_and_unknown_formats() {
+        let t = tempfile::tempdir().unwrap();
+        let home = t.path();
+        write(&home.join("alt-codex/sessions/2026/11/20/rollout-x.jsonl"), CODEX_LINES);
+        write(&home.join("misc/logs/u.jsonl"), r#"{"model":"m","usage":{"output_tokens":1}}"#);
+        let (cands, _) = scan_data(&[home.to_path_buf()], home, &[], &no_cancel());
+        assert_eq!(cands.len(), 2);
+        let cx = cands.iter().find(|c| c.known_format == Some(crate::model::AgentKind::Codex)).unwrap();
+        assert_eq!(canon(std::path::Path::new(&cx.path)), canon(&home.join("alt-codex")));
+        let un = cands.iter().find(|c| c.known_format.is_none()).unwrap();
+        assert_eq!(canon(std::path::Path::new(&un.path)), canon(&home.join("misc/logs")));
+    }
+
+    #[test]
+    fn scan_data_excludes_tracker_own_data_dir() {
+        let t = tempfile::tempdir().unwrap();
+        let home = t.path();
+        write(&home.join("Library/Application Support/AI Token Tracker/x.jsonl"), CLAUDE_LINE);
+        let (cands, _) = scan_data(&[home.to_path_buf()], home, &[], &no_cancel());
+        assert!(cands.is_empty());
     }
 }

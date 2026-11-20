@@ -60,7 +60,7 @@ pub fn walk_pruned(
 
 fn should_skip(e: &DirEntry, library: &Path, app_support: &Path, skip_paths: &[PathBuf]) -> bool {
     let name = e.file_name().to_string_lossy();
-    if SKIP_DIRS.contains(&name.as_ref()) {
+    if e.file_type().is_dir() && SKIP_DIRS.contains(&name.as_ref()) {
         return true;
     }
     let p = e.path();

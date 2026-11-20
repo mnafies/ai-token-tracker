@@ -36,9 +36,9 @@ pub fn sniff_file(path: &Path) -> Option<Sniff> {
     if !matches!(ext.as_str(), "jsonl" | "json" | "db" | "sqlite") {
         return None;
     }
-    let mut buf = [0u8; 8192];
-    let n = std::fs::File::open(path).ok()?.take(8192).read(&mut buf).ok()?;
-    let buf = &buf[..n];
+    let mut buf = Vec::with_capacity(8192);
+    std::fs::File::open(path).ok()?.take(8192).read_to_end(&mut buf).ok()?;
+    let buf = &buf[..];
     if matches!(ext.as_str(), "db" | "sqlite") {
         return if buf.starts_with(b"SQLite format 3\0") { sniff_sqlite(path) } else { None };
     }
@@ -58,7 +58,22 @@ pub fn sniff_file(path: &Path) -> Option<Sniff> {
 
 fn sniff_sqlite(path: &Path) -> Option<Sniff> {
     use rusqlite::{Connection, OpenFlags};
-    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).ok()?;
+    // immutable=1: never create -shm/-wal side files in the scanned directory.
+    let abs = std::fs::canonicalize(path).ok()?;
+    let mut uri = String::from("file:");
+    for b in abs.to_string_lossy().bytes() {
+        if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) {
+            uri.push(b as char);
+        } else {
+            uri.push_str(&format!("%{b:02X}"));
+        }
+    }
+    uri.push_str("?immutable=1");
+    let conn = Connection::open_with_flags(
+        uri,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
     let tables: Vec<String> = conn
         .prepare("SELECT name FROM sqlite_master WHERE type='table'")
         .ok()?
@@ -104,6 +119,7 @@ fn group_dir(file: &Path, kind: Option<AgentKind>) -> PathBuf {
 
 pub fn scan_data(roots: &[PathBuf], home: &Path, known_roots: &[PathBuf], cancel: &AtomicBool) -> (Vec<Candidate>, Vec<PathBuf>) {
     let mut denied = Vec::new();
+    let own_dir = home.join("Library/Application Support/AI Token Tracker");
     let mut groups: BTreeMap<PathBuf, Candidate> = BTreeMap::new();
     walk_pruned(
         roots,
@@ -111,7 +127,7 @@ pub fn scan_data(roots: &[PathBuf], home: &Path, known_roots: &[PathBuf], cancel
         cancel,
         &mut |e| {
             let p = e.path();
-            if known_roots.iter().any(|k| p.starts_with(k)) {
+            if p.starts_with(&own_dir) || known_roots.iter().any(|k| p.starts_with(k)) {
                 return false;
             }
             if !e.file_type().is_file() {
