@@ -61,7 +61,9 @@ pub fn truncate_title(s: &str) -> String {
         .replace(['\n', '\r'], " ")
         .chars()
         .take(80)
-        .collect()
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -73,5 +75,7 @@ mod tests {
         let s = "é".repeat(100);
         assert_eq!(truncate_title(&s).chars().count(), 80);
         assert_eq!(truncate_title("  a\nb "), "a b");
+        let t = format!("{} b", "a".repeat(79));
+        assert_eq!(truncate_title(&t), "a".repeat(79));
     }
 }

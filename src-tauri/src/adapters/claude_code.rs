@@ -130,7 +130,7 @@ impl Adapter for ClaudeCodeAdapter {
                     }
                 }
                 Some("user") => {
-                    if acc.first_user.is_none() {
+                    if acc.first_user.is_none() && forced_session.is_none() {
                         if let Some(s) = v.pointer("/message/content").and_then(Value::as_str) {
                             acc.first_user = Some(truncate_title(s));
                         }
@@ -139,6 +139,7 @@ impl Adapter for ClaudeCodeAdapter {
                 Some("assistant") => {
                     let Some(msg) = v.get("message") else { continue };
                     let Some(usage) = msg.get("usage") else { continue };
+                    let Some(ts) = ts else { continue };
                     let event_key = match msg.get("id").and_then(Value::as_str) {
                         Some(id) => format!("claude:{id}"),
                         None => match v.get("uuid").and_then(Value::as_str) {
@@ -150,7 +151,7 @@ impl Adapter for ClaudeCodeAdapter {
                         agent: AgentKind::ClaudeCode,
                         event_key: event_key.clone(),
                         session_id: session_id.clone(),
-                        ts_ms: ts.unwrap_or(0),
+                        ts_ms: ts,
                         cwd,
                         model: msg.get("model").and_then(Value::as_str).unwrap_or("").to_string(),
                         provider_hint: "anthropic".to_string(),
@@ -291,5 +292,30 @@ mod tests {
         std::fs::write(&p, s).unwrap();
         let (out2, _) = a.parse(&src, &st).unwrap();
         assert_eq!(out2.sessions[0].title, None);
+    }
+
+    #[test]
+    fn claude_subagent_user_prompt_never_becomes_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("projects/p/sess-9/subagents/agent-y.jsonl");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "{\"type\":\"user\",\"sessionId\":\"sess-9\",\"timestamp\":\"2026-11-20T01:00:00Z\",\"message\":{\"content\":\"do the subtask\"}}\n{\"type\":\"assistant\",\"sessionId\":\"sess-9\",\"timestamp\":\"2026-11-20T01:00:01Z\",\"uuid\":\"a\",\"message\":{\"id\":\"m\",\"model\":\"x\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n").unwrap();
+        let a = ClaudeCodeAdapter { root: dir.path().to_path_buf() };
+        let src = Source { path: p, kind: SourceKind::Jsonl };
+        let (out, _) = a.parse(&src, &SourceState::default()).unwrap();
+        assert_eq!(out.sessions[0].session_id, "sess-9");
+        assert_eq!(out.sessions[0].title, None);
+    }
+
+    #[test]
+    fn claude_event_without_timestamp_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("projects/p/s.jsonl");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "{\"type\":\"assistant\",\"sessionId\":\"s\",\"uuid\":\"a\",\"message\":{\"id\":\"m1\",\"model\":\"x\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n{\"type\":\"assistant\",\"sessionId\":\"s\",\"timestamp\":\"bad\",\"uuid\":\"b\",\"message\":{\"id\":\"m2\",\"model\":\"x\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n").unwrap();
+        let a = ClaudeCodeAdapter { root: dir.path().to_path_buf() };
+        let src = Source { path: p, kind: SourceKind::Jsonl };
+        let (out, _) = a.parse(&src, &SourceState::default()).unwrap();
+        assert!(out.events.is_empty());
     }
 }
