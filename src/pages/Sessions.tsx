@@ -1,18 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { listAgents, listSessions } from "../api";
 import CostCell from "../components/CostCell";
 import DataTable from "../components/DataTable";
 import ErrorBox from "../components/ErrorBox";
 import PeriodPicker from "../components/PeriodPicker";
-import { formatDateTime, formatDuration, formatTokens } from "../lib/format";
+import { formatDateTime, formatDuration, formatTokens, projectName } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
 import type { PageProps } from "../nav";
 import type { PeriodSpec } from "../types";
 
-export default function Sessions({ refreshKey, params, navigate }: PageProps) {
-  const [period, setPeriod] = useState<PeriodSpec>({ kind: "thisMonth" });
+export default function Sessions({ refreshKey, params, navigate, onParamsChange }: PageProps) {
+  const [period, setPeriod] = useState<PeriodSpec>(params.period ?? { kind: "thisMonth" });
   const [agent, setAgent] = useState<string>(params.agent ?? "");
   const [projectKey, setProjectKey] = useState<string | null>(params.projectKey ?? null);
+  useEffect(() => {
+    onParamsChange?.({ ...params, period, agent: agent || undefined, projectKey: projectKey ?? undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, agent, projectKey]);
   const agents = useAsync(listAgents, [refreshKey]);
   const sessions = useAsync(
     () => listSessions({ period, agent: agent || null, projectKey }),
@@ -34,7 +38,7 @@ export default function Sessions({ refreshKey, params, navigate }: PageProps) {
           </select>
         </label>
         {projectKey && (
-          <span className="chip">Project: {projectKey}
+          <span className="chip">Project: <span title={projectKey}>{projectName(projectKey)}</span>
             <button aria-label="Hapus filter project" onClick={() => setProjectKey(null)}>✕</button>
           </span>
         )}
@@ -57,7 +61,7 @@ export default function Sessions({ refreshKey, params, navigate }: PageProps) {
                   </>
                 ),
               },
-              { header: "Project", render: (r) => r.projectKey ?? "—", sortValue: (r) => r.projectKey?.toLowerCase() ?? null },
+              { header: "Project", render: (r) => r.projectKey ? <span title={r.projectKey}>{projectName(r.projectKey)}</span> : "—", sortValue: (r) => r.projectKey ? projectName(r.projectKey).toLowerCase() : null },
               { header: "Mulai", render: (r) => (r.startedMs != null ? formatDateTime(r.startedMs) : "—"), sortValue: (r) => r.startedMs },
               {
                 header: "Durasi", align: "right", render: (r) => formatDuration(r.startedMs, r.updatedMs),
@@ -65,7 +69,7 @@ export default function Sessions({ refreshKey, params, navigate }: PageProps) {
               },
               { header: "Model", render: (r) => r.models.join(", ") || "—" },
               { header: "Token", align: "right", render: (r) => formatTokens(r.tokens), sortValue: (r) => r.tokens },
-              { header: "Biaya", align: "right", render: (r) => <CostCell usd={r.costUsd} unpriced={r.unpricedTokens} />, sortValue: (r) => r.costUsd },
+              { header: "Biaya", align: "right", render: (r) => r.tokenStatus === "not-recorded" ? "—" : <CostCell usd={r.costUsd} unpriced={r.unpricedTokens} />, sortValue: (r) => (r.tokenStatus === "not-recorded" ? null : r.costUsd) },
             ]} />
         </section>
       )}

@@ -33,6 +33,7 @@ const PAGES = {
 
 export default function App() {
   const [nav, setNav] = useState<{ page: Page; params: NavParams }>({ page: "dashboard", params: {} });
+  const [navSeq, setNavSeq] = useState(0);
   const [prev, setPrev] = useState<{ page: Page; params: NavParams } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -61,10 +62,13 @@ export default function App() {
     // Remember where we came from so the session detail can go back.
     if (page === "sessionDetail" && nav.page !== "sessionDetail") setPrev(nav);
     setNav({ page, params });
+    setNavSeq((n) => n + 1);
   }, [nav]);
+  const onParamsChange = useCallback((params: NavParams) => setNav((cur) => ({ ...cur, params })), []);
   const goBack = useCallback(() => {
     const target = prev ?? { page: "sessions" as Page, params: {} };
     setNav(target);
+    setNavSeq((n) => n + 1);
   }, [prev]);
   const Current = PAGES[nav.page];
 
@@ -81,7 +85,7 @@ export default function App() {
         </nav>
         <main className="content">
           <ErrorBox message={settingsError} />
-          <Current refreshKey={refreshKey} params={nav.params} navigate={navigate} goBack={goBack} />
+          <Current key={`${nav.page}-${navSeq}`} onParamsChange={onParamsChange} refreshKey={refreshKey} params={nav.params} navigate={navigate} goBack={goBack} />
         </main>
       </div>
     </SettingsContext.Provider>

@@ -5,7 +5,7 @@ import CostCell from "../components/CostCell";
 import DataTable from "../components/DataTable";
 import ErrorBox from "../components/ErrorBox";
 import { buildCumulative } from "../lib/cumulative";
-import { formatDateTime, formatMoney, formatTokens, priceStatusLabel } from "../lib/format";
+import { formatDateTime, formatMoney, formatTokens, priceStatusLabel, projectName } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
 import { useSettings } from "../nav";
 import type { PageProps } from "../nav";
@@ -22,7 +22,7 @@ export default function SessionDetail({ refreshKey, params, goBack }: PageProps)
 
   const cum = useMemo(() => buildCumulative(d?.events ?? []), [d]);
   const folders = useMemo(() => [...new Set((d?.events ?? []).map((e) => e.cwd).filter((c): c is string => !!c))], [d]);
-  const sortedEvents = useMemo(() => d?.events ?? [], [d]);
+  const rows = useMemo(() => (d?.events ?? []).map((e, i) => ({ ...e, _i: i })), [d]);
 
   return (
     <div className="page">
@@ -35,10 +35,10 @@ export default function SessionDetail({ refreshKey, params, goBack }: PageProps)
           <section className="card">
             <h1>{d.row.title ?? d.row.sessionId.slice(0, 8)}</h1>
             <div className="muted">
-              {label} · Project: {d.row.projectKey ?? "—"} · Folder kerja: {folders.length ? folders.join(", ") : "—"}
+              {label} · Project: {d.row.projectKey ? <span title={d.row.projectKey}>{projectName(d.row.projectKey)}</span> : "—"} · Folder kerja: {folders.length ? folders.join(", ") : "—"}
             </div>
             <div style={{ marginTop: 8 }}>
-              <CostCell usd={d.row.costUsd} unpriced={d.row.unpricedTokens} />
+              {d.row.tokenStatus === "not-recorded" ? "—" : <CostCell usd={d.row.costUsd} unpriced={d.row.unpricedTokens} />}
               <span className="muted"> · {formatTokens(d.row.tokens)} token · {d.events.length} respons</span>
             </div>
             {d.row.tokenStatus === "not-recorded" && <div className="muted small">token tidak tercatat lokal</div>}
@@ -72,7 +72,7 @@ export default function SessionDetail({ refreshKey, params, goBack }: PageProps)
 
           <section className="card">
             <h2>Per respons</h2>
-            <DataTable rows={sortedEvents} rowKey={(e) => `${e.tsMs}/${e.model}/${e.input}/${e.output}/${e.cacheRead}/${e.cacheWrite}/${sortedEvents.indexOf(e)}`}
+            <DataTable rows={rows} rowKey={(e) => `${e.tsMs}/${e._i}`}
               defaultSort={{ header: "Waktu", dir: "asc" }}
               columns={[
                 { header: "Waktu", render: (e) => formatDateTime(e.tsMs), sortValue: (e) => e.tsMs },

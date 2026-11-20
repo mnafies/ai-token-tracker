@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { Settings } from "./types";
+import type { PeriodSpec, Settings } from "./types";
 
 export type Page =
   | "dashboard" | "trends" | "projects" | "sessions" | "models" | "agents" | "pricing" | "settings"
@@ -10,6 +10,8 @@ export interface NavParams {
   projectKey?: string;
   agent?: string;
   sessionId?: string;
+  /** Sessions page filter state, kept so back-navigation restores it. */
+  period?: PeriodSpec;
 }
 
 export interface PageProps {
@@ -19,6 +21,8 @@ export interface PageProps {
   navigate: (page: Page, params?: NavParams) => void;
   /** Return to the page that opened the session detail. */
   goBack?: () => void;
+  /** Replace the current page params without pushing history. */
+  onParamsChange?: (params: NavParams) => void;
 }
 
 export const DEFAULT_SETTINGS: Settings = {

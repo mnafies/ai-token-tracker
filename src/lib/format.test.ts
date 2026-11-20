@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { costLabel, formatMoney, formatPct, formatTokens } from "./format";
+import { costLabel, formatDuration, formatMoney, formatPct, formatPer1M, formatTokens, priceStatusLabel, projectName } from "./format";
 import type { Settings } from "../types";
 
 const base: Settings = { currency: "usd", idrRate: null, launchAtLogin: true, processPollSecs: 5, scanRoots: [] };
@@ -37,7 +37,6 @@ test("costLabel mentions unpriced", () => {
   expect(costLabel(1, 0, base)).toBe("$1.00");
 });
 
-import { formatDuration } from "./format";
 test("formatDuration", () => {
   expect(formatDuration(0, 65 * 60000)).toBe("1j 5m");
   expect(formatDuration(0, 12 * 60000 + 5000)).toBe("12m");
@@ -48,11 +47,17 @@ test("formatDuration", () => {
   expect(formatDuration(10, 5)).toBe("—");
 });
 
-import { formatPer1M, priceStatusLabel } from "./format";
 test("price helpers", () => {
   expect(formatPer1M(0.000003)).toBe("$3.00");
   expect(formatPer1M(null)).toBe("—");
   expect(priceStatusLabel("mapped")).toBe("Dipetakan");
   expect(priceStatusLabel("unknown")).toBe("Tidak diketahui");
   expect(priceStatusLabel("zzz")).toBe("zzz");
+});
+
+test("projectName is the last path segment", () => {
+  expect(projectName("/a/b/proj")).toBe("proj");
+  expect(projectName("/a/b/proj/")).toBe("proj");
+  expect(projectName("/")).toBe("/");
+  expect(projectName("plain")).toBe("plain");
 });

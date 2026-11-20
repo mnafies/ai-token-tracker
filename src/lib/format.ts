@@ -35,6 +35,12 @@ export function costLabel(usd: number, unpriced: number, s: Settings): string {
   return unpriced > 0 ? `${money} + ${formatTokens(unpriced)} token tanpa harga` : money;
 }
 
+/** Last path segment (mirrors Rust project::display_name); falls back to the key itself. */
+export function projectName(key: string): string {
+  const seg = key.split("/").filter(Boolean).pop();
+  return seg ?? key;
+}
+
 export function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 }
