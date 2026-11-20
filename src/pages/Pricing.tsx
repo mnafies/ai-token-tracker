@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { getAppStatus, listModels, listPriceCatalog, refreshPrices, setModelOverride } from "../api";
 import DataTable from "../components/DataTable";
 import ErrorBox from "../components/ErrorBox";
-import { formatDateTime, formatPer1M, per1MToPerToken, priceStatusLabel } from "../lib/format";
+import { formatDateTime, formatPer1M, priceStatusLabel } from "../lib/format";
+import { manualPrices, type ManualPriceInput } from "../lib/manualPrice";
 import { useAsync } from "../lib/useAsync";
 import type { PageProps } from "../nav";
 import type { ModelOverride, ModelRow, PeriodSpec } from "../types";
@@ -15,12 +16,6 @@ function widestPeriod(): PeriodSpec {
 }
 const key = (hint: string, model: string) => `${hint}/${model}`;
 
-function parsePrice(s: string | undefined): number | null {
-  if (s == null || s.trim() === "") return null;
-  const n = Number(s.replace(",", "."));
-  return Number.isFinite(n) && n >= 0 ? n : NaN;
-}
-
 export default function Pricing({ refreshKey }: PageProps) {
   const [tick, setTick] = useState(0);
   const status = useAsync(getAppStatus, [refreshKey, tick]);
@@ -29,8 +24,7 @@ export default function Pricing({ refreshKey }: PageProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mapInput, setMapInput] = useState<Record<string, string>>({});
-  const [prompt, setPrompt] = useState<Record<string, string>>({});
-  const [completion, setCompletion] = useState<Record<string, string>>({});
+  const [manualIn, setManualIn] = useState<Record<string, ManualPriceInput>>({});
   const [rowErr, setRowErr] = useState<Record<string, string>>({});
 
   // Catalog is only needed here, so load it lazily on open.
@@ -69,12 +63,9 @@ export default function Pricing({ refreshKey }: PageProps) {
   };
   const manual = (m: ModelRow) => {
     const rk = key(m.providerHint, m.model);
-    const p = parsePrice(prompt[rk]);
-    const c = parsePrice(completion[rk]);
-    if (p == null || c == null || Number.isNaN(p) || Number.isNaN(c)) {
-      return setRowErr((r) => ({ ...r, [rk]: "Isi harga input dan output (angka ≥ 0, per 1M token)." }));
-    }
-    return override(m, { action: "manual", prompt: per1MToPerToken(p), completion: per1MToPerToken(c) }, rk);
+    const prices = manualPrices(manualIn[rk] ?? {});
+    if (typeof prices === "string") return setRowErr((r) => ({ ...r, [rk]: prices }));
+    return override(m, { action: "manual", ...prices }, rk);
   };
 
   return (
@@ -116,14 +107,23 @@ export default function Pricing({ refreshKey }: PageProps) {
               header: "Harga manual (USD / 1M token)",
               render: (m) => {
                 const rk = key(m.providerHint, m.model);
+                const field = (f: keyof ManualPriceInput, placeholder: string, label: string) => (
+                  <input type="number" min="0" step="any" placeholder={placeholder} aria-label={`${label} ${m.model}`}
+                    style={{ width: f.startsWith("cache") ? 120 : 80 }}
+                    value={manualIn[rk]?.[f] ?? ""}
+                    onChange={(e) => setManualIn((s) => ({ ...s, [rk]: { ...s[rk], [f]: e.target.value } }))} />
+                );
                 return (
-                  <span className="controls">
-                    <input type="number" min="0" step="any" placeholder="Input" aria-label={`Harga input ${m.model}`} style={{ width: 80 }}
-                      value={prompt[rk] ?? ""} onChange={(e) => setPrompt((s) => ({ ...s, [rk]: e.target.value }))} />
-                    <input type="number" min="0" step="any" placeholder="Output" aria-label={`Harga output ${m.model}`} style={{ width: 80 }}
-                      value={completion[rk] ?? ""} onChange={(e) => setCompletion((s) => ({ ...s, [rk]: e.target.value }))} />
-                    <button disabled={busy} onClick={() => manual(m)}>Simpan</button>
-                  </span>
+                  <>
+                    <span className="controls">
+                      {field("prompt", "Input", "Harga input")}
+                      {field("completion", "Output", "Harga output")}
+                      {field("cacheRead", "Cache read / 1M", "Harga cache read")}
+                      {field("cacheWrite", "Cache write / 1M", "Harga cache write")}
+                      <button disabled={busy} onClick={() => manual(m)}>Simpan</button>
+                    </span>
+                    <div className="small muted">Jika harga cache dikosongkan, token cache dihitung dengan harga input.</div>
+                  </>
                 );
               },
             },

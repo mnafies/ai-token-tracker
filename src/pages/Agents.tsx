@@ -103,8 +103,11 @@ export default function Agents({ refreshKey }: PageProps) {
                   header: "Aksi",
                   render: (c) => (
                     <span className="controls">
-                      <button disabled={c.decision === "track"} onClick={() => act(() => setCandidateDecision(c.path, "track"))}>Lacak</button>
+                      <button disabled={c.decision === "track" || c.knownFormat == null}
+                        title={c.knownFormat == null ? "format belum didukung" : undefined}
+                        onClick={() => act(() => setCandidateDecision(c.path, "track"))}>Lacak</button>
                       <button disabled={c.decision === "ignore"} onClick={() => act(() => setCandidateDecision(c.path, "ignore"))}>Abaikan</button>
+                      {c.knownFormat == null && <span className="small muted">format belum didukung</span>}
                     </span>
                   ),
                 },
