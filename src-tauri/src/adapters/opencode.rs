@@ -4,6 +4,8 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+const OVERLAP_MS: i64 = 60_000;
+
 pub struct OpenCodeAdapter {
     pub root: PathBuf,
 }
@@ -37,8 +39,11 @@ impl Adapter for OpenCodeAdapter {
             &src.path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        let since = prev.offset as i64;
-        let mut max_updated = since;
+        // Overlap window: rows may commit later with an older time_updated than the
+        // high-water mark (same-ms writes, session bumped past its messages). Re-reading
+        // is safe because event_key upserts are idempotent.
+        let since = (prev.offset as i64).saturating_sub(OVERLAP_MS).max(0);
+        let mut max_updated = prev.offset as i64;
 
         let mut sessions = Vec::new();
         let mut stmt = conn.prepare(
@@ -105,7 +110,8 @@ impl Adapter for OpenCodeAdapter {
                 model: s("/model/id"),
                 provider_hint: s("/model/providerID"),
                 input: n("/input"),
-                output: n("/output"),
+                // opencode's `output` excludes reasoning; normalized output includes it.
+                output: n("/output") + n("/reasoning"),
                 reasoning: n("/reasoning"),
                 cache_read: n("/cache/read"),
                 cache_write: n("/cache/write"),
@@ -130,7 +136,7 @@ impl Adapter for OpenCodeAdapter {
 
         Ok((
             ParseOutput { events, sessions },
-            SourceState { offset: max_updated as u64, size, mtime_ms, context: Value::Null },
+            SourceState { offset: max_updated.max(0) as u64, size, mtime_ms, context: Value::Null },
         ))
     }
 }
@@ -173,7 +179,7 @@ mod tests {
         let (out, state) = a.parse(&src, &SourceState::default()).unwrap();
         assert_eq!(out.events.len(), 1);
         let e = &out.events[0];
-        assert_eq!((e.input, e.output, e.reasoning, e.cache_read, e.cache_write), (5603, 173, 32, 1536, 0));
+        assert_eq!((e.input, e.output, e.reasoning, e.cache_read, e.cache_write), (5603, 205, 32, 1536, 0));
         assert_eq!(e.model, "gpt-5.6-luna-fast");
         assert_eq!(e.provider_hint, "openai");
         assert_eq!(e.cwd.as_deref(), Some("/tmp/oc"));
@@ -203,10 +209,36 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = make_db(dir.path());
         let a = OpenCodeAdapter { root: dir.path().to_path_buf() };
-        let (_, state) = a.parse(&src, &SourceState::default()).unwrap();
+        let (first, state) = a.parse(&src, &SourceState::default()).unwrap();
         let (out, state2) = a.parse(&src, &state).unwrap();
-        assert!(out.events.is_empty());
-        assert!(out.sessions.is_empty());
+        // Overlap window may re-emit rows, but never new event keys.
+        for e in &out.events {
+            assert!(first.events.iter().any(|f| f.event_key == e.event_key));
+        }
+        assert_eq!(state2.offset, state.offset);
+        // Rows far older than the overlap window are not re-read.
+        let far = SourceState { offset: state.offset + 120_000, ..state.clone() };
+        let (out, state3) = a.parse(&src, &far).unwrap();
+        assert!(out.events.is_empty() && out.sessions.is_empty());
+        assert_eq!(state3.offset, far.offset);
+    }
+
+    #[test]
+    fn opencode_late_row_inside_overlap_is_picked_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = make_db(dir.path());
+        let a = OpenCodeAdapter { root: dir.path().to_path_buf() };
+        let (_, state) = a.parse(&src, &SourceState::default()).unwrap();
+        let c = Connection::open(&src.path).unwrap();
+        let late = state.offset as i64 - 1000;
+        c.execute(
+            "INSERT INTO session_message VALUES('late','ses_1','assistant',9,1,?1,?2)",
+            rusqlite::params![late, ASSISTANT],
+        )
+        .unwrap();
+        drop(c);
+        let (out, state2) = a.parse(&src, &state).unwrap();
+        assert!(out.events.iter().any(|e| e.event_key == "opencode:late"));
         assert_eq!(state2.offset, state.offset);
     }
 
