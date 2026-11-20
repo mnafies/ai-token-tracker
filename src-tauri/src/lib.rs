@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod db;
 pub mod model;
+pub mod project;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
