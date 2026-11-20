@@ -4,6 +4,7 @@ pub mod ingest;
 pub mod model;
 pub mod period;
 pub mod pricing;
+pub mod process;
 pub mod project;
 pub mod query;
 pub mod watcher;
