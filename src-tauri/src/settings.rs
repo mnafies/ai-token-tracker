@@ -34,18 +34,26 @@ impl Settings {
         }
     }
 
-    /// The saved settings, or `None` when nothing (readable) has been saved yet.
+    /// The saved settings: `Ok(None)` when nothing has been saved yet, `Err` when the saved
+    /// value cannot be read.
     pub fn stored(db: &Db) -> anyhow::Result<Option<Settings>> {
         let raw: Option<String> = db
             .conn
             .query_row("SELECT value FROM settings WHERE key = ?1", [KEY], |r| r.get(0))
             .optional()?;
-        Ok(raw.and_then(|v| serde_json::from_str(&v).ok()))
+        Ok(raw.map(|v| serde_json::from_str(&v)).transpose()?)
     }
 
     /// Saved settings, falling back to defaults when none are saved or they are unreadable.
     pub fn load(db: &Db, home: &Path) -> Settings {
-        Self::stored(db).ok().flatten().unwrap_or_else(|| Self::defaults(home))
+        match Self::stored(db) {
+            Ok(Some(s)) => s,
+            Ok(None) => Self::defaults(home),
+            Err(e) => {
+                eprintln!("settings unreadable, using defaults: {e:#}");
+                Self::defaults(home)
+            }
+        }
     }
 
     pub fn save(&self, db: &Db) -> anyhow::Result<()> {
@@ -102,6 +110,7 @@ mod tests {
     fn unreadable_settings_fall_back_to_defaults() {
         let db = Db::open_in_memory().unwrap();
         db.conn.execute("INSERT INTO settings(key, value) VALUES ('app', 'not json')", []).unwrap();
+        assert!(Settings::stored(&db).is_err(), "unreadable is not the same as absent");
         assert_eq!(Settings::load(&db, Path::new("/h")), Settings::defaults(Path::new("/h")));
     }
 }

@@ -7,13 +7,30 @@ use crate::services::{self, emit_updated};
 use crate::settings::Settings;
 use crate::state::{DiscoveryView, SessionFilterArg};
 use crate::{AgentRow, AppState, AppStatus};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_autostart::ManagerExt;
 
 type CmdResult<T> = Result<T, String>;
 
 fn err(e: anyhow::Error) -> String {
     format!("{e:#}")
+}
+
+/// Runs blocking command logic on Tauri's blocking thread pool, off the async workers
+/// (where e.g. `reqwest::blocking` panics). Panics and errors both become an error string.
+pub async fn run_blocking<T: Send + 'static>(f: impl FnOnce() -> anyhow::Result<T> + Send + 'static) -> CmdResult<T> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("command task failed: {e}"))?
+        .map_err(err)
+}
+
+/// [`run_blocking`] with the managed [`AppState`] and the app handle.
+async fn with_state<T: Send + 'static>(
+    app: AppHandle,
+    f: impl FnOnce(&AppState, &AppHandle) -> anyhow::Result<T> + Send + 'static,
+) -> CmdResult<T> {
+    run_blocking(move || f(&app.state::<AppState>(), &app)).await
 }
 
 /// Warning shown when the app was not running for more than 20 days: Claude Code deletes
@@ -27,76 +44,85 @@ pub fn retention_warning(gap_days: f64) -> Option<String> {
     })
 }
 
-#[tauri::command(async)]
-pub fn get_overview(state: State<'_, AppState>, period: PeriodSpec) -> CmdResult<Overview> {
-    state.overview(&period).map_err(err)
+#[tauri::command]
+pub async fn get_overview(app: AppHandle, period: PeriodSpec) -> CmdResult<Overview> {
+    with_state(app, move |s, _| s.overview(&period)).await
 }
 
-#[tauri::command(async)]
-pub fn get_trends(state: State<'_, AppState>, granularity: Granularity, count: u32, split: Split) -> CmdResult<Vec<TrendBucket>> {
-    state.trends(granularity, count, split).map_err(err)
+#[tauri::command]
+pub async fn get_trends(app: AppHandle, granularity: Granularity, count: u32, split: Split) -> CmdResult<Vec<TrendBucket>> {
+    with_state(app, move |s, _| s.trends(granularity, count, split)).await
 }
 
-#[tauri::command(async)]
-pub fn list_projects(state: State<'_, AppState>, period: PeriodSpec) -> CmdResult<Vec<ProjectRow>> {
-    state.projects(&period).map_err(err)
+#[tauri::command]
+pub async fn list_projects(app: AppHandle, period: PeriodSpec) -> CmdResult<Vec<ProjectRow>> {
+    with_state(app, move |s, _| s.projects(&period)).await
 }
 
-#[tauri::command(async)]
-pub fn list_sessions(state: State<'_, AppState>, filter: SessionFilterArg) -> CmdResult<Vec<SessionRow>> {
-    state.sessions(&filter).map_err(err)
+#[tauri::command]
+pub async fn list_sessions(app: AppHandle, filter: SessionFilterArg) -> CmdResult<Vec<SessionRow>> {
+    with_state(app, move |s, _| s.sessions(&filter)).await
 }
 
-#[tauri::command(async)]
-pub fn get_session(state: State<'_, AppState>, agent: String, session_id: String) -> CmdResult<Option<SessionDetail>> {
-    state.session(&agent, &session_id).map_err(err)
+#[tauri::command]
+pub async fn get_session(app: AppHandle, agent: String, session_id: String) -> CmdResult<Option<SessionDetail>> {
+    with_state(app, move |s, _| s.session(&agent, &session_id)).await
 }
 
-#[tauri::command(async)]
-pub fn list_models(state: State<'_, AppState>, period: PeriodSpec) -> CmdResult<Vec<ModelRow>> {
-    state.models(&period).map_err(err)
+#[tauri::command]
+pub async fn list_models(app: AppHandle, period: PeriodSpec) -> CmdResult<Vec<ModelRow>> {
+    with_state(app, move |s, _| s.models(&period)).await
 }
 
-#[tauri::command(async)]
-pub fn list_agents(state: State<'_, AppState>) -> CmdResult<Vec<AgentRow>> {
-    state.agents().map_err(err)
+#[tauri::command]
+pub async fn list_agents(app: AppHandle) -> CmdResult<Vec<AgentRow>> {
+    with_state(app, |s, _| s.agents()).await
 }
 
-#[tauri::command(async)]
-pub fn get_app_status(state: State<'_, AppState>) -> CmdResult<AppStatus> {
-    state.status().map_err(err)
+#[tauri::command]
+pub async fn get_app_status(app: AppHandle) -> CmdResult<AppStatus> {
+    with_state(app, |s, _| s.status()).await
 }
 
-#[tauri::command(async)]
-pub fn refresh_prices(app: AppHandle, state: State<'_, AppState>) -> CmdResult<PricingStatus> {
-    let status = state.refresh_prices(&fetch_models);
-    emit_updated(&app);
-    Ok(status)
+#[tauri::command]
+pub async fn refresh_prices(app: AppHandle) -> CmdResult<PricingStatus> {
+    with_state(app, |s, app| {
+        let status = s.refresh_prices(&fetch_models);
+        emit_updated(app);
+        Ok(status)
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub fn set_model_override(app: AppHandle, state: State<'_, AppState>, o: ModelOverride) -> CmdResult<()> {
-    state.set_model_override(&o).map_err(err)?;
-    emit_updated(&app);
-    Ok(())
+#[tauri::command]
+pub async fn set_model_override(app: AppHandle, o: ModelOverride) -> CmdResult<()> {
+    with_state(app, move |s, app| {
+        s.set_model_override(&o)?;
+        emit_updated(app);
+        Ok(())
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub fn list_price_catalog(state: State<'_, AppState>) -> CmdResult<Vec<String>> {
-    state.price_catalog().map_err(err)
+#[tauri::command]
+pub async fn list_price_catalog(app: AppHandle) -> CmdResult<Vec<String>> {
+    with_state(app, |s, _| s.price_catalog()).await
 }
 
-#[tauri::command(async)]
-pub fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
-    Ok(state.settings())
+#[tauri::command]
+pub async fn get_settings(app: AppHandle) -> CmdResult<Settings> {
+    with_state(app, |s, _| Ok(s.settings())).await
 }
 
-#[tauri::command(async)]
-pub fn update_settings(app: AppHandle, state: State<'_, AppState>, s: Settings) -> CmdResult<()> {
-    state.update_settings(&s).map_err(err)?;
-    sync_autostart(&app, s.launch_at_login);
-    emit_updated(&app);
-    Ok(())
+#[tauri::command]
+pub async fn update_settings(app: AppHandle, s: Settings) -> CmdResult<()> {
+    with_state(app, move |state, app| {
+        state.update_settings(&s)?;
+        sync_autostart(app, s.launch_at_login);
+        emit_updated(app);
+        Ok(())
+    })
+    .await
 }
 
 /// Makes the login item match `enabled`; failures are logged, not fatal.
@@ -108,43 +134,60 @@ pub fn sync_autostart(app: &AppHandle, enabled: bool) {
     }
 }
 
-#[tauri::command(async)]
-pub fn start_discovery(app: AppHandle) -> CmdResult<()> {
-    services::spawn_discovery(&app);
-    Ok(())
+/// Marks discovery as running before returning (so an immediate `get_app_status` sees it),
+/// then scans in the background. No-op while a run is in progress.
+#[tauri::command]
+pub async fn start_discovery(app: AppHandle) -> CmdResult<()> {
+    with_state(app, |s, app| {
+        if s.begin_discovery() {
+            services::spawn_begun_discovery(app);
+        }
+        Ok(())
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub fn cancel_discovery(state: State<'_, AppState>) -> CmdResult<()> {
-    state.cancel_discovery();
-    Ok(())
+#[tauri::command]
+pub async fn cancel_discovery(app: AppHandle) -> CmdResult<()> {
+    with_state(app, |s, _| {
+        s.cancel_discovery();
+        Ok(())
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub fn get_discovery(state: State<'_, AppState>) -> CmdResult<DiscoveryView> {
-    state.discovery().map_err(err)
+#[tauri::command]
+pub async fn get_discovery(app: AppHandle) -> CmdResult<DiscoveryView> {
+    with_state(app, |s, _| s.discovery()).await
 }
 
-#[tauri::command(async)]
-pub fn set_candidate_decision(app: AppHandle, state: State<'_, AppState>, path: String, decision: String) -> CmdResult<()> {
-    let result = state.set_candidate_decision(&path, &decision).map_err(err);
-    // The adapter list may have changed even if the follow-up ingest failed.
-    services::rewatch(&app);
-    emit_updated(&app);
-    result.map(|_| ())
+#[tauri::command]
+pub async fn set_candidate_decision(app: AppHandle, path: String, decision: String) -> CmdResult<()> {
+    with_state(app, move |s, app| {
+        let result = s.set_candidate_decision(&path, &decision);
+        // The adapter list may have changed even if the follow-up ingest failed.
+        services::rewatch(app);
+        emit_updated(app);
+        result.map(|_| ())
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub fn export_csv(state: State<'_, AppState>, kind: String, period: PeriodSpec, path: String) -> CmdResult<()> {
-    state.export_csv(&kind, &period, std::path::Path::new(&path)).map_err(err)
+#[tauri::command]
+pub async fn export_csv(app: AppHandle, kind: String, period: PeriodSpec, path: String) -> CmdResult<()> {
+    with_state(app, move |s, _| s.export_csv(&kind, &period, std::path::Path::new(&path))).await
 }
 
-#[tauri::command(async)]
-pub fn wipe_all_data(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
-    state.wipe_all().map_err(err)?;
-    emit_updated(&app);
-    services::spawn_rebuild(&app);
-    Ok(())
+#[tauri::command]
+pub async fn wipe_all_data(app: AppHandle) -> CmdResult<()> {
+    with_state(app, |s, app| {
+        s.wipe_all()?;
+        services::rewatch(app);
+        emit_updated(app);
+        services::spawn_rebuild(app);
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -159,5 +202,21 @@ mod tests {
             retention_warning(21.7).as_deref(),
             Some("Aplikasi tidak berjalan 21 hari. Sesi Claude Code yang lebih tua dari 30 hari mungkin sudah terhapus sebelum sempat tercatat.")
         );
+    }
+    #[test]
+    fn run_blocking_allows_blocking_http_client() {
+        let r = tauri::async_runtime::block_on(run_blocking(|| {
+            drop(reqwest::blocking::Client::new());
+            Ok(42)
+        }));
+        assert_eq!(r, Ok(42));
+    }
+
+    #[test]
+    fn run_blocking_maps_errors_and_panics() {
+        let e = tauri::async_runtime::block_on(run_blocking(|| -> anyhow::Result<()> { anyhow::bail!("nope") }));
+        assert_eq!(e, Err("nope".to_string()));
+        let p = tauri::async_runtime::block_on(run_blocking(|| -> anyhow::Result<()> { panic!("boom") }));
+        assert!(p.is_err());
     }
 }

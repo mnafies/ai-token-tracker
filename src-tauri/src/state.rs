@@ -63,16 +63,34 @@ fn now_ms() -> i64 {
 }
 
 // Poisoned locks are recovered: a panic elsewhere must not take every command down with it.
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
+pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| {
+        m.clear_poison();
+        e.into_inner()
+    })
 }
 
-fn read<T>(l: &RwLock<T>) -> RwLockReadGuard<'_, T> {
-    l.read().unwrap_or_else(|e| e.into_inner())
+pub(crate) fn read<T>(l: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    l.read().unwrap_or_else(|e| {
+        l.clear_poison();
+        e.into_inner()
+    })
 }
 
 fn write<T>(l: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
-    l.write().unwrap_or_else(|e| e.into_inner())
+    l.write().unwrap_or_else(|e| {
+        l.clear_poison();
+        e.into_inner()
+    })
+}
+
+/// Clears the discovery running flag when dropped, even if the scan panics.
+struct ClearOnDrop<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for ClearOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 /// Rejects custom periods the queries cannot handle (empty/inverted, too long, out of range).
@@ -116,10 +134,19 @@ impl AppState {
     /// gap since the previous launch.
     pub fn open(home: PathBuf, db_path: &Path) -> Result<AppState> {
         let db = Db::open(db_path)?;
-        let first_run = Settings::stored(&db)?.is_none();
-        if first_run {
-            Settings::defaults(&home).save(&db)?;
-        }
+        // Unreadable settings are not a first run: keep the stored value and skip the
+        // first-run actions (default save, autostart, discovery); `settings()` falls back.
+        let first_run = match Settings::stored(&db) {
+            Ok(None) => {
+                Settings::defaults(&home).save(&db)?;
+                true
+            }
+            Ok(Some(_)) => false,
+            Err(e) => {
+                eprintln!("stored settings unreadable: {e:#}");
+                false
+            }
+        };
         let gap_days = db
             .get_meta("last_seen_ms")?
             .and_then(|v| v.parse::<i64>().ok())
@@ -290,28 +317,46 @@ impl AppState {
         Settings::load(&self.db(), &self.home)
     }
 
+    /// Validates and saves; the process poll interval is clamped to 1..=3600 s.
     pub fn update_settings(&self, s: &Settings) -> Result<()> {
-        if s.process_poll_secs == 0 {
-            bail!("Interval poll proses minimal 1 detik");
-        }
         if s.idr_rate.is_some_and(|r| !r.is_finite() || r <= 0.0) {
             bail!("Kurs IDR harus angka positif");
         }
+        if s.scan_roots.is_empty() {
+            bail!("Minimal satu folder scan");
+        }
+        if let Some(bad) = s.scan_roots.iter().find(|r| !Path::new(r.as_str()).is_absolute()) {
+            bail!("Folder scan harus path absolut: {bad:?}");
+        }
+        let s = Settings { process_poll_secs: s.process_poll_secs.clamp(1, 3600), ..s.clone() };
         s.save(&self.db())
+    }
+
+    /// Marks a discovery run as started (and resets the cancel flag). Returns `false` when
+    /// one is already running; otherwise the caller must follow up with [`Self::run_begun_discovery`].
+    pub fn begin_discovery(&self) -> bool {
+        if self.discovery_running.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            return false;
+        }
+        self.discovery_cancel.store(false, Ordering::SeqCst);
+        true
+    }
+
+    /// Runs a discovery started with [`Self::begin_discovery`]; always clears the running flag.
+    pub fn run_begun_discovery(&self) -> Result<()> {
+        let _clear = ClearOnDrop(&self.discovery_running);
+        let roots: Vec<PathBuf> = self.settings().scan_roots.iter().map(PathBuf::from).collect();
+        let known: Vec<PathBuf> = read(&self.adapters).iter().map(|a| a.root().to_path_buf()).collect();
+        discovery::run_discovery(&self.db, &roots, &self.home, &known, &self.discovery_cancel)
     }
 
     /// Runs discovery over the configured scan roots. Returns `false` without scanning
     /// when a run is already in progress.
     pub fn run_discovery(&self) -> Result<bool> {
-        if self.discovery_running.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        if !self.begin_discovery() {
             return Ok(false);
         }
-        self.discovery_cancel.store(false, Ordering::SeqCst);
-        let roots: Vec<PathBuf> = self.settings().scan_roots.iter().map(PathBuf::from).collect();
-        let known: Vec<PathBuf> = read(&self.adapters).iter().map(|a| a.root().to_path_buf()).collect();
-        let result = discovery::run_discovery(&self.db, &roots, &self.home, &known, &self.discovery_cancel);
-        self.discovery_running.store(false, Ordering::SeqCst);
-        result.map(|_| true)
+        self.run_begun_discovery().map(|_| true)
     }
 
     pub fn cancel_discovery(&self) {
@@ -404,12 +449,18 @@ impl AppState {
         Ok(())
     }
 
-    /// Deletes all recorded data (settings and model overrides are kept).
+    /// Deletes all recorded data (settings and model overrides are kept). Track decisions
+    /// are wiped too, so the adapter list falls back to the defaults (callers re-watch).
     pub fn wipe_all(&self) -> Result<()> {
         let _serial = lock(&self.ingest_lock);
-        let mut db = self.db();
-        db.wipe_all()?;
-        db.set_meta("last_seen_ms", &now_ms().to_string())
+        let adapters = {
+            let mut db = self.db();
+            db.wipe_all()?;
+            db.set_meta("last_seen_ms", &now_ms().to_string())?;
+            all_adapters(&self.home, &db)?
+        };
+        *write(&self.adapters) = adapters;
+        Ok(())
     }
 
     /// Refreshes the running-agents snapshot; returns true when the set changed.
@@ -705,7 +756,13 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let s = open(t.path());
         let base = s.settings();
-        assert!(s.update_settings(&Settings { process_poll_secs: 0, ..base.clone() }).is_err());
+        s.update_settings(&Settings { process_poll_secs: 0, ..base.clone() }).unwrap();
+        assert_eq!(s.settings().process_poll_secs, 1, "poll interval is clamped up to 1 s");
+        s.update_settings(&Settings { process_poll_secs: 99_999, ..base.clone() }).unwrap();
+        assert_eq!(s.settings().process_poll_secs, 3600, "poll interval is clamped down to 1 h");
+        for roots in [vec![], vec![String::new()], vec!["relative/dir".to_string()]] {
+            assert!(s.update_settings(&Settings { scan_roots: roots.clone(), ..base.clone() }).is_err(), "{roots:?}");
+        }
         assert!(s.update_settings(&Settings { idr_rate: Some(-1.0), ..base.clone() }).is_err());
         assert!(s.update_settings(&Settings { idr_rate: Some(f64::NAN), ..base.clone() }).is_err());
         let new = Settings { process_poll_secs: 15, idr_rate: Some(16000.0), ..base };
@@ -751,5 +808,66 @@ mod tests {
         let mut sys = sysinfo::System::new();
         s.poll_processes(&mut sys).unwrap();
         s.poll_processes(&mut sys).unwrap();
+    }
+    #[test]
+    fn wipe_resets_tracked_adapters() {
+        let t = tempfile::tempdir().unwrap();
+        let alt = t.path().join("alt-claude");
+        copy_dir(&fixture("claude"), &alt);
+        let s = open(t.path());
+        let path = alt.to_string_lossy().into_owned();
+        s.db.lock().unwrap().conn
+            .execute(
+                "INSERT INTO discovery_candidates(path, guessed_agent, known_format, file_count, found_ms) VALUES (?1, 'claude-code', 'claude-code', 2, 1)",
+                [&path],
+            )
+            .unwrap();
+        s.set_candidate_decision(&path, "track").unwrap();
+        assert!(count(&s, "SELECT COUNT(*) FROM events") > 0);
+        assert_eq!(s.adapters.read().unwrap().len(), 8);
+        s.wipe_all().unwrap();
+        assert_eq!(s.adapters.read().unwrap().len(), 7, "track decisions are wiped, so is the adapter");
+        s.ingest_all().unwrap();
+        assert_eq!(count(&s, "SELECT COUNT(*) FROM events"), 0, "the untracked source is not re-ingested");
+    }
+
+    #[test]
+    fn poisoned_lock_is_recovered_and_cleared() {
+        let m = std::sync::Arc::new(Mutex::new(1));
+        let m2 = m.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = m2.lock().unwrap();
+            panic!("poison it");
+        })
+        .join();
+        assert!(m.is_poisoned());
+        assert_eq!(*lock(&m), 1);
+        assert!(!m.is_poisoned());
+    }
+
+    #[test]
+    fn unreadable_settings_are_not_a_first_run() {
+        let t = tempfile::tempdir().unwrap();
+        drop(open(t.path()));
+        let db_path = AppState::db_path(t.path());
+        Db::open(&db_path).unwrap().conn.execute("UPDATE settings SET value = 'garbage' WHERE key = 'app'", []).unwrap();
+        let s = open(t.path());
+        assert!(!s.first_run, "corrupt settings must not re-trigger first-run actions");
+        assert_eq!(s.settings(), Settings::defaults(t.path()));
+        let raw: String = s.db.lock().unwrap().conn.query_row("SELECT value FROM settings WHERE key = 'app'", [], |r| r.get(0)).unwrap();
+        assert_eq!(raw, "garbage", "the stored value is not overwritten on open");
+    }
+
+    #[test]
+    fn begin_discovery_marks_running_until_the_run_ends() {
+        let (_t, s) = setup();
+        s.update_settings(&Settings { scan_roots: vec![_t.path().to_string_lossy().into_owned()], ..s.settings() }).unwrap();
+        s.cancel_discovery();
+        assert!(s.begin_discovery());
+        assert!(s.status().unwrap().discovery_running);
+        assert!(!s.discovery_cancel.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!s.begin_discovery(), "only one run at a time");
+        s.run_begun_discovery().unwrap();
+        assert!(!s.status().unwrap().discovery_running);
     }
 }
