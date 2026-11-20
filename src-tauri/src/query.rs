@@ -214,7 +214,7 @@ pub fn overview(db: &Db, spec: &PeriodSpec, now: DateTime<FixedOffset>) -> anyho
 }
 
 /// One point per local day in the range, including empty days.
-fn daily(db: &Db, r: &PeriodRange, now: DateTime<FixedOffset>) -> anyhow::Result<Vec<DailyPoint>> {
+pub fn daily(db: &Db, r: &PeriodRange, now: DateTime<FixedOffset>) -> anyhow::Result<Vec<DailyPoint>> {
     let sql = format!(
         "{} SELECT date(ts_ms/1000 + ?3, 'unixepoch') AS d, agent, COALESCE(SUM(cost), 0), SUM(tokens)
          FROM ev WHERE {IN_RANGE} GROUP BY d, agent ORDER BY d, agent",
