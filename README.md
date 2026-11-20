@@ -54,6 +54,8 @@ npm install
 npm run tauri build -- --bundles dmg
 ```
 
+Dari sesi headless/SSH, awali perintah dengan `CI=true` (melewati penataan jendela dmg via Finder AppleScript yang gagal tanpa GUI).
+
 Hasil: `src-tauri/target/release/bundle/dmg/` (atau `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/` bila memakai `--target aarch64-apple-darwin`).
 
 Tes:
