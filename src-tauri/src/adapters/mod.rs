@@ -11,7 +11,12 @@ pub struct SourceState {
 
 impl Default for SourceState {
     fn default() -> Self {
-        SourceState { offset: 0, size: 0, mtime_ms: 0, context: Value::Null }
+        SourceState {
+            offset: 0,
+            size: 0,
+            mtime_ms: 0,
+            context: Value::Null,
+        }
     }
 }
 
@@ -45,7 +50,8 @@ pub trait Adapter: Send + Sync {
     /// True when the agent's root directory exists.
     fn detect(&self) -> bool;
     fn sources(&self) -> Vec<Source>;
-    fn parse(&self, src: &Source, prev: &SourceState) -> anyhow::Result<(ParseOutput, SourceState)>;
+    fn parse(&self, src: &Source, prev: &SourceState)
+    -> anyhow::Result<(ParseOutput, SourceState)>;
 }
 
 pub fn adapter_for(kind: AgentKind, root: PathBuf) -> Box<dyn Adapter> {
@@ -55,7 +61,9 @@ pub fn adapter_for(kind: AgentKind, root: PathBuf) -> Box<dyn Adapter> {
         AgentKind::OpenCode => Box::new(opencode::OpenCodeAdapter { root }),
         AgentKind::GeminiCli => Box::new(gemini::GeminiAdapter { root }),
         AgentKind::CopilotCli => Box::new(copilot::CopilotAdapter { root }),
-        AgentKind::ClaudeDesktop | AgentKind::VsCode => Box::new(presence::PresenceAdapter { kind, root }),
+        AgentKind::ClaudeDesktop | AgentKind::VsCode => {
+            Box::new(presence::PresenceAdapter { kind, root })
+        }
     }
 }
 
@@ -66,8 +74,14 @@ pub fn default_adapters(home: &Path) -> Vec<Box<dyn Adapter>> {
         adapter_for(AgentKind::OpenCode, home.join(".local/share/opencode")),
         adapter_for(AgentKind::GeminiCli, home.join(".gemini")),
         adapter_for(AgentKind::CopilotCli, home.join(".copilot")),
-        adapter_for(AgentKind::ClaudeDesktop, home.join("Library/Application Support/Claude")),
-        adapter_for(AgentKind::VsCode, home.join("Library/Application Support/Code")),
+        adapter_for(
+            AgentKind::ClaudeDesktop,
+            home.join("Library/Application Support/Claude"),
+        ),
+        adapter_for(
+            AgentKind::VsCode,
+            home.join("Library/Application Support/Code"),
+        ),
     ]
 }
 
@@ -89,8 +103,10 @@ mod tests {
 
     #[test]
     fn default_adapters_has_seven_kinds() {
-        let kinds: Vec<AgentKind> =
-            default_adapters(Path::new("/h")).iter().map(|a| a.kind()).collect();
+        let kinds: Vec<AgentKind> = default_adapters(Path::new("/h"))
+            .iter()
+            .map(|a| a.kind())
+            .collect();
         assert_eq!(
             kinds,
             vec![

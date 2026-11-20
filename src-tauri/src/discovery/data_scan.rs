@@ -37,23 +37,37 @@ pub fn sniff_file(path: &Path) -> Option<Sniff> {
         return None;
     }
     let mut buf = Vec::with_capacity(8192);
-    std::fs::File::open(path).ok()?.take(8192).read_to_end(&mut buf).ok()?;
+    std::fs::File::open(path)
+        .ok()?
+        .take(8192)
+        .read_to_end(&mut buf)
+        .ok()?;
     let buf = &buf[..];
     if matches!(ext.as_str(), "db" | "sqlite") {
-        return if buf.starts_with(b"SQLite format 3\0") { sniff_sqlite(path) } else { None };
+        return if buf.starts_with(b"SQLite format 3\0") {
+            sniff_sqlite(path)
+        } else {
+            None
+        };
     }
     let text = String::from_utf8_lossy(buf);
     if !text.contains("\"model\"") || !USAGE_KEYS.iter().any(|k| text.contains(k)) {
         return None;
     }
-    let known_format = if text.contains("\"sessionId\"") && text.contains("\"message\"") && text.contains("\"usage\"") {
+    let known_format = if text.contains("\"sessionId\"")
+        && text.contains("\"message\"")
+        && text.contains("\"usage\"")
+    {
         Some(AgentKind::ClaudeCode)
     } else if text.contains("\"type\":\"session_meta\"") || text.contains("token_count") {
         Some(AgentKind::Codex)
     } else {
         None
     };
-    Some(Sniff { guessed_agent: known_format.map(|k| k.as_str().to_string()), known_format })
+    Some(Sniff {
+        guessed_agent: known_format.map(|k| k.as_str().to_string()),
+        known_format,
+    })
 }
 
 fn sniff_sqlite(path: &Path) -> Option<Sniff> {
@@ -71,7 +85,9 @@ fn sniff_sqlite(path: &Path) -> Option<Sniff> {
     uri.push_str("?immutable=1");
     let conn = Connection::open_with_flags(
         uri,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .ok()?;
     let tables: Vec<String> = conn
@@ -89,10 +105,20 @@ fn sniff_sqlite(path: &Path) -> Option<Sniff> {
     }
     for t in &tables {
         let sql = format!("PRAGMA table_info(\"{}\")", t.replace('"', "\"\""));
-        let Ok(mut st) = conn.prepare(&sql) else { continue };
-        let Ok(rows) = st.query_map([], |r| r.get::<_, String>(1)) else { continue };
-        if rows.filter_map(Result::ok).any(|c| c.to_lowercase().contains("token")) {
-            return Some(Sniff { guessed_agent: None, known_format: None });
+        let Ok(mut st) = conn.prepare(&sql) else {
+            continue;
+        };
+        let Ok(rows) = st.query_map([], |r| r.get::<_, String>(1)) else {
+            continue;
+        };
+        if rows
+            .filter_map(Result::ok)
+            .any(|c| c.to_lowercase().contains("token"))
+        {
+            return Some(Sniff {
+                guessed_agent: None,
+                known_format: None,
+            });
         }
     }
     None
@@ -117,7 +143,12 @@ fn group_dir(file: &Path, kind: Option<AgentKind>) -> PathBuf {
     file.parent().unwrap_or(file).to_path_buf()
 }
 
-pub fn scan_data(roots: &[PathBuf], home: &Path, known_roots: &[PathBuf], cancel: &AtomicBool) -> (Vec<Candidate>, Vec<PathBuf>) {
+pub fn scan_data(
+    roots: &[PathBuf],
+    home: &Path,
+    known_roots: &[PathBuf],
+    cancel: &AtomicBool,
+) -> (Vec<Candidate>, Vec<PathBuf>) {
     let mut denied = Vec::new();
     let own_dir = home.join("Library/Application Support/AI Token Tracker");
     let mut groups: BTreeMap<PathBuf, Candidate> = BTreeMap::new();

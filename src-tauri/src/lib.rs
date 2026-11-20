@@ -75,7 +75,8 @@ pub struct AgentRow {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is not set"));
-    let state = AppState::open(home.clone(), &AppState::db_path(&home)).expect("cannot open the tracker database");
+    let state = AppState::open(home.clone(), &AppState::db_path(&home))
+        .expect("cannot open the tracker database");
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(

@@ -39,7 +39,9 @@ impl Settings {
     pub fn stored(db: &Db) -> anyhow::Result<Option<Settings>> {
         let raw: Option<String> = db
             .conn
-            .query_row("SELECT value FROM settings WHERE key = ?1", [KEY], |r| r.get(0))
+            .query_row("SELECT value FROM settings WHERE key = ?1", [KEY], |r| {
+                r.get(0)
+            })
             .optional()?;
         Ok(raw.map(|v| serde_json::from_str(&v)).transpose()?)
     }
@@ -109,8 +111,19 @@ mod tests {
     #[test]
     fn unreadable_settings_fall_back_to_defaults() {
         let db = Db::open_in_memory().unwrap();
-        db.conn.execute("INSERT INTO settings(key, value) VALUES ('app', 'not json')", []).unwrap();
-        assert!(Settings::stored(&db).is_err(), "unreadable is not the same as absent");
-        assert_eq!(Settings::load(&db, Path::new("/h")), Settings::defaults(Path::new("/h")));
+        db.conn
+            .execute(
+                "INSERT INTO settings(key, value) VALUES ('app', 'not json')",
+                [],
+            )
+            .unwrap();
+        assert!(
+            Settings::stored(&db).is_err(),
+            "unreadable is not the same as absent"
+        );
+        assert_eq!(
+            Settings::load(&db, Path::new("/h")),
+            Settings::defaults(Path::new("/h"))
+        );
     }
 }

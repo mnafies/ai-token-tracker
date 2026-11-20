@@ -64,11 +64,17 @@ impl Adapter for ClaudeCodeAdapter {
             }
             for entry in sorted_entries(&proj) {
                 if is_jsonl(&entry) {
-                    out.push(Source { path: entry, kind: SourceKind::Jsonl });
+                    out.push(Source {
+                        path: entry,
+                        kind: SourceKind::Jsonl,
+                    });
                 } else if entry.is_dir() {
                     for f in sorted_entries(&entry.join("subagents")) {
                         if is_jsonl(&f) {
-                            out.push(Source { path: f, kind: SourceKind::Jsonl });
+                            out.push(Source {
+                                path: f,
+                                kind: SourceKind::Jsonl,
+                            });
                         }
                     }
                 }
@@ -77,7 +83,11 @@ impl Adapter for ClaudeCodeAdapter {
         out
     }
 
-    fn parse(&self, src: &Source, prev: &SourceState) -> anyhow::Result<(ParseOutput, SourceState)> {
+    fn parse(
+        &self,
+        src: &Source,
+        prev: &SourceState,
+    ) -> anyhow::Result<(ParseOutput, SourceState)> {
         let (lines, offset) = read_complete_lines(&src.path, prev.offset)?;
         let meta = std::fs::metadata(&src.path)?;
         let mtime_ms = meta
@@ -93,7 +103,9 @@ impl Adapter for ClaudeCodeAdapter {
         let mut sessions: Vec<(String, SessionAcc)> = Vec::new();
 
         for line in &lines {
-            let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
             let Some(session_id) = forced_session
                 .clone()
                 .or_else(|| v.get("sessionId").and_then(Value::as_str).map(String::from))
@@ -137,8 +149,12 @@ impl Adapter for ClaudeCodeAdapter {
                     }
                 }
                 Some("assistant") => {
-                    let Some(msg) = v.get("message") else { continue };
-                    let Some(usage) = msg.get("usage") else { continue };
+                    let Some(msg) = v.get("message") else {
+                        continue;
+                    };
+                    let Some(usage) = msg.get("usage") else {
+                        continue;
+                    };
                     let Some(ts) = ts else { continue };
                     let event_key = match msg.get("id").and_then(Value::as_str) {
                         Some(id) => format!("claude:{id}"),
@@ -153,7 +169,11 @@ impl Adapter for ClaudeCodeAdapter {
                         session_id: session_id.clone(),
                         ts_ms: ts,
                         cwd,
-                        model: msg.get("model").and_then(Value::as_str).unwrap_or("").to_string(),
+                        model: msg
+                            .get("model")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
                         provider_hint: "anthropic".to_string(),
                         input: i64_at(usage, "input_tokens"),
                         output: i64_at(usage, "output_tokens"),
@@ -213,7 +233,12 @@ impl Adapter for ClaudeCodeAdapter {
 
         Ok((
             ParseOutput { events, sessions },
-            SourceState { offset, size: meta.len(), mtime_ms, context },
+            SourceState {
+                offset,
+                size: meta.len(),
+                mtime_ms,
+                context,
+            },
         ))
     }
 }
@@ -223,11 +248,16 @@ mod tests {
     use super::*;
 
     fn adapter() -> ClaudeCodeAdapter {
-        ClaudeCodeAdapter { root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude") }
+        ClaudeCodeAdapter {
+            root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude"),
+        }
     }
 
     fn parse_file(rel: &str) -> ParseOutput {
-        let src = Source { path: adapter().root.join(rel), kind: SourceKind::Jsonl };
+        let src = Source {
+            path: adapter().root.join(rel),
+            kind: SourceKind::Jsonl,
+        };
         adapter().parse(&src, &SourceState::default()).unwrap().0
     }
 
@@ -237,15 +267,28 @@ mod tests {
     #[test]
     fn claude_dedupes_streamed_duplicates() {
         let out = parse_file(MAIN);
-        assert_eq!(out.events.iter().filter(|e| e.event_key == "claude:msg_A").count(), 1);
+        assert_eq!(
+            out.events
+                .iter()
+                .filter(|e| e.event_key == "claude:msg_A")
+                .count(),
+            1
+        );
         assert_eq!(out.events.len(), 2);
     }
 
     #[test]
     fn claude_maps_usage_fields() {
         let out = parse_file(MAIN);
-        let e = out.events.iter().find(|e| e.event_key == "claude:msg_A").unwrap();
-        assert_eq!((e.input, e.cache_write, e.cache_read, e.output, e.reasoning), (10, 100, 1000, 50, 20));
+        let e = out
+            .events
+            .iter()
+            .find(|e| e.event_key == "claude:msg_A")
+            .unwrap();
+        assert_eq!(
+            (e.input, e.cache_write, e.cache_read, e.output, e.reasoning),
+            (10, 100, 1000, 50, 20)
+        );
         assert_eq!(e.model, "claude-opus-5-5");
         assert_eq!(e.provider_hint, "anthropic");
         assert_eq!(e.cwd.as_deref(), Some("/tmp/demo"));
@@ -282,8 +325,13 @@ mod tests {
         let p = dir.path().join("projects/p/s.jsonl");
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, "{\"type\":\"user\",\"sessionId\":\"s\",\"timestamp\":\"2026-11-20T01:00:00Z\",\"message\":{\"content\":\"hello there\"}}\n{\"type\":\"assis").unwrap();
-        let a = ClaudeCodeAdapter { root: dir.path().to_path_buf() };
-        let src = Source { path: p.clone(), kind: SourceKind::Jsonl };
+        let a = ClaudeCodeAdapter {
+            root: dir.path().to_path_buf(),
+        };
+        let src = Source {
+            path: p.clone(),
+            kind: SourceKind::Jsonl,
+        };
         let (out, st) = a.parse(&src, &SourceState::default()).unwrap();
         assert_eq!(out.sessions[0].title.as_deref(), Some("hello there"));
         assert_eq!(st.context["title_fallback_done"], true);
@@ -300,8 +348,13 @@ mod tests {
         let p = dir.path().join("projects/p/sess-9/subagents/agent-y.jsonl");
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, "{\"type\":\"user\",\"sessionId\":\"sess-9\",\"timestamp\":\"2026-11-20T01:00:00Z\",\"message\":{\"content\":\"do the subtask\"}}\n{\"type\":\"assistant\",\"sessionId\":\"sess-9\",\"timestamp\":\"2026-11-20T01:00:01Z\",\"uuid\":\"a\",\"message\":{\"id\":\"m\",\"model\":\"x\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n").unwrap();
-        let a = ClaudeCodeAdapter { root: dir.path().to_path_buf() };
-        let src = Source { path: p, kind: SourceKind::Jsonl };
+        let a = ClaudeCodeAdapter {
+            root: dir.path().to_path_buf(),
+        };
+        let src = Source {
+            path: p,
+            kind: SourceKind::Jsonl,
+        };
         let (out, _) = a.parse(&src, &SourceState::default()).unwrap();
         assert_eq!(out.sessions[0].session_id, "sess-9");
         assert_eq!(out.sessions[0].title, None);
@@ -313,8 +366,13 @@ mod tests {
         let p = dir.path().join("projects/p/s.jsonl");
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, "{\"type\":\"assistant\",\"sessionId\":\"s\",\"uuid\":\"a\",\"message\":{\"id\":\"m1\",\"model\":\"x\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n{\"type\":\"assistant\",\"sessionId\":\"s\",\"timestamp\":\"bad\",\"uuid\":\"b\",\"message\":{\"id\":\"m2\",\"model\":\"x\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n").unwrap();
-        let a = ClaudeCodeAdapter { root: dir.path().to_path_buf() };
-        let src = Source { path: p, kind: SourceKind::Jsonl };
+        let a = ClaudeCodeAdapter {
+            root: dir.path().to_path_buf(),
+        };
+        let src = Source {
+            path: p,
+            kind: SourceKind::Jsonl,
+        };
         let (out, _) = a.parse(&src, &SourceState::default()).unwrap();
         assert!(out.events.is_empty());
     }

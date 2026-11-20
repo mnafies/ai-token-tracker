@@ -16,28 +16,52 @@ fn main() -> anyhow::Result<()> {
     let elapsed = t.elapsed();
     pricing::rebuild_resolved(&db.lock().unwrap())?;
 
-    println!("ingest: {:?} (sources {}, events {}, sessions {}, errors {})",
-        elapsed, report.sources_read, report.events, report.sessions, report.errors);
+    println!(
+        "ingest: {:?} (sources {}, events {}, sessions {}, errors {})",
+        elapsed, report.sources_read, report.events, report.sessions, report.errors
+    );
     {
-    let d = db.lock().unwrap();
-    println!("agent | sessions | events | input | output | cache_read | cache_write | reasoning");
-    let mut st = d.conn.prepare(
+        let d = db.lock().unwrap();
+        println!(
+            "agent | sessions | events | input | output | cache_read | cache_write | reasoning"
+        );
+        let mut st = d.conn.prepare(
         "SELECT agent, COUNT(DISTINCT session_id), COUNT(*), SUM(input), SUM(output), SUM(cache_read), SUM(cache_write), SUM(reasoning) \
          FROM events GROUP BY agent ORDER BY agent")?;
-    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
-        r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?, r.get::<_, i64>(6)?, r.get::<_, i64>(7)?)))?;
-    for r in rows {
-        let r = r?;
-        println!("{} | {} | {} | {} | {} | {} | {} | {}", r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7);
-    }
-    println!("top 3 sessions by output tokens: (agent, session_id, events, output)");
-    let mut st = d.conn.prepare(
+        let rows = st.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, i64>(7)?,
+            ))
+        })?;
+        for r in rows {
+            let r = r?;
+            println!(
+                "{} | {} | {} | {} | {} | {} | {} | {}",
+                r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7
+            );
+        }
+        println!("top 3 sessions by output tokens: (agent, session_id, events, output)");
+        let mut st = d.conn.prepare(
         "SELECT agent, session_id, COUNT(*), SUM(output) o FROM events GROUP BY agent, session_id ORDER BY o DESC LIMIT 3")?;
-    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?)))?;
-    for r in rows {
-        let r = r?;
-        println!("({}, {}, {}, {})", r.0, r.1, r.2, r.3);
-    }
+        let rows = st.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })?;
+        for r in rows {
+            let r = r?;
+            println!("({}, {}, {}, {})", r.0, r.1, r.2, r.3);
+        }
     }
     std::fs::remove_dir_all(&dir)?;
     Ok(())

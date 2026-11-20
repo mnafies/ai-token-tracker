@@ -60,7 +60,9 @@ fn git_result(root: &Path) -> ResolvedProject {
 
 /// Resolves only cwds not yet present in `cwd_projects`; existing rows are never overwritten.
 pub fn ensure_cwd_projects(db: &Db, cwds: &[String]) -> anyhow::Result<()> {
-    let mut exists = db.conn.prepare("SELECT 1 FROM cwd_projects WHERE cwd = ?1")?;
+    let mut exists = db
+        .conn
+        .prepare("SELECT 1 FROM cwd_projects WHERE cwd = ?1")?;
     let mut insert = db.conn.prepare(
         "INSERT OR IGNORE INTO cwd_projects (cwd, project_key, is_git) VALUES (?1, ?2, ?3)",
     )?;
@@ -109,7 +111,11 @@ mod tests {
         fs::create_dir_all(main.join(".git/worktrees/wt")).unwrap();
         let wt = t.path().join("wt");
         fs::create_dir_all(&wt).unwrap();
-        fs::write(wt.join(".git"), format!("gitdir: {}/.git/worktrees/wt\n", main.display())).unwrap();
+        fs::write(
+            wt.join(".git"),
+            format!("gitdir: {}/.git/worktrees/wt\n", main.display()),
+        )
+        .unwrap();
         let r = resolve_project(&wt);
         assert_eq!(r.project_key, canon_s(&main));
         assert!(r.is_git);
@@ -135,7 +141,11 @@ mod tests {
         fs::create_dir_all(repo.join(".git/worktrees/fitur-x")).unwrap();
         let wt = repo.join(".claude/worktrees/fitur-x");
         fs::create_dir_all(&wt).unwrap();
-        fs::write(wt.join(".git"), format!("gitdir: {}/.git/worktrees/fitur-x\n", repo.display())).unwrap();
+        fs::write(
+            wt.join(".git"),
+            format!("gitdir: {}/.git/worktrees/fitur-x\n", repo.display()),
+        )
+        .unwrap();
         let r = resolve_project(&wt);
         assert_eq!(r.project_key, canon_s(&repo));
         assert!(r.is_git);
@@ -167,15 +177,25 @@ mod tests {
         let cwd = d.to_string_lossy().into_owned();
         let db = Db::open_in_memory().unwrap();
         db.conn
-            .execute("INSERT INTO cwd_projects (cwd, project_key, is_git) VALUES (?1, 'old', 1)", [&cwd])
+            .execute(
+                "INSERT INTO cwd_projects (cwd, project_key, is_git) VALUES (?1, 'old', 1)",
+                [&cwd],
+            )
             .unwrap();
         ensure_cwd_projects(&db, &[cwd.clone(), "/nonexistent/other".into()]).unwrap();
         let (k, g): (String, i64) = db
             .conn
-            .query_row("SELECT project_key, is_git FROM cwd_projects WHERE cwd=?1", [&cwd], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_row(
+                "SELECT project_key, is_git FROM cwd_projects WHERE cwd=?1",
+                [&cwd],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .unwrap();
         assert_eq!((k.as_str(), g), ("old", 1));
-        let n: i64 = db.conn.query_row("SELECT COUNT(*) FROM cwd_projects", [], |r| r.get(0)).unwrap();
+        let n: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM cwd_projects", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(n, 2);
     }
 

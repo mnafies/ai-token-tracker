@@ -10,7 +10,8 @@ use crate::period::{self, PeriodSpec};
 use crate::pricing::{self, ModelOverride, PricingStatus, openrouter::OrModel};
 use crate::process;
 use crate::query::{
-    self, Granularity, ModelRow, Overview, ProjectRow, SessionDetail, SessionFilter, SessionRow, Split, TrendBucket,
+    self, Granularity, ModelRow, Overview, ProjectRow, SessionDetail, SessionFilter, SessionRow,
+    Split, TrendBucket,
 };
 use crate::settings::Settings;
 use crate::{AgentRow, AppState, AppStatus};
@@ -185,7 +186,11 @@ impl AppState {
         let on_progress = |p| *write(&self.progress) = Some(p);
         let mut total = IngestReport::default();
         let mut result = Ok(());
-        for (_, a) in adapters.iter().enumerate().filter(|(i, a)| pick(*i, a.as_ref())) {
+        for (_, a) in adapters
+            .iter()
+            .enumerate()
+            .filter(|(i, a)| pick(*i, a.as_ref()))
+        {
             match ingest::ingest_adapter(&self.db, a.as_ref(), &on_progress) {
                 Ok(r) => {
                     total.sources_read += r.sources_read;
@@ -266,7 +271,9 @@ impl AppState {
         for a in default_adapters(&self.home) {
             let kind = a.kind();
             let (sessions, first_ms, last_ms, has_recorded): (i64, Option<i64>, Option<i64>, bool) =
-                stats.query_row([kind.as_str()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+                stats.query_row([kind.as_str()], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                })?;
             out.push(AgentRow {
                 agent: kind.as_str().to_string(),
                 label: kind.label().to_string(),
@@ -276,7 +283,11 @@ impl AppState {
                 sessions,
                 first_ms,
                 last_ms,
-                running: running.iter().filter(|r| r.agent == kind).cloned().collect(),
+                running: running
+                    .iter()
+                    .filter(|r| r.agent == kind)
+                    .cloned()
+                    .collect(),
             });
         }
         Ok(out)
@@ -291,7 +302,9 @@ impl AppState {
             progress: read(&self.progress).clone(),
             pricing: pricing::status(&db)?,
             discovery_running: self.discovery_running.load(Ordering::SeqCst),
-            data_since_ms: db.conn.query_row("SELECT MIN(ts_ms) FROM events", [], |r| r.get(0))?,
+            data_since_ms: db
+                .conn
+                .query_row("SELECT MIN(ts_ms) FROM events", [], |r| r.get(0))?,
         })
     }
 
@@ -308,8 +321,12 @@ impl AppState {
 
     pub fn price_catalog(&self) -> Result<Vec<String>> {
         let db = self.db();
-        let mut st = db.conn.prepare("SELECT openrouter_id FROM prices ORDER BY openrouter_id")?;
-        let ids = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let mut st = db
+            .conn
+            .prepare("SELECT openrouter_id FROM prices ORDER BY openrouter_id")?;
+        let ids = st
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(ids)
     }
 
@@ -325,17 +342,28 @@ impl AppState {
         if s.scan_roots.is_empty() {
             bail!("Minimal satu folder scan");
         }
-        if let Some(bad) = s.scan_roots.iter().find(|r| !Path::new(r.as_str()).is_absolute()) {
+        if let Some(bad) = s
+            .scan_roots
+            .iter()
+            .find(|r| !Path::new(r.as_str()).is_absolute())
+        {
             bail!("Folder scan harus path absolut: {bad:?}");
         }
-        let s = Settings { process_poll_secs: s.process_poll_secs.clamp(1, 3600), ..s.clone() };
+        let s = Settings {
+            process_poll_secs: s.process_poll_secs.clamp(1, 3600),
+            ..s.clone()
+        };
         s.save(&self.db())
     }
 
     /// Marks a discovery run as started (and resets the cancel flag). Returns `false` when
     /// one is already running; otherwise the caller must follow up with [`Self::run_begun_discovery`].
     pub fn begin_discovery(&self) -> bool {
-        if self.discovery_running.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        if self
+            .discovery_running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return false;
         }
         self.discovery_cancel.store(false, Ordering::SeqCst);
@@ -345,8 +373,16 @@ impl AppState {
     /// Runs a discovery started with [`Self::begin_discovery`]; always clears the running flag.
     pub fn run_begun_discovery(&self) -> Result<()> {
         let _clear = ClearOnDrop(&self.discovery_running);
-        let roots: Vec<PathBuf> = self.settings().scan_roots.iter().map(PathBuf::from).collect();
-        let known: Vec<PathBuf> = read(&self.adapters).iter().map(|a| a.root().to_path_buf()).collect();
+        let roots: Vec<PathBuf> = self
+            .settings()
+            .scan_roots
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+        let known: Vec<PathBuf> = read(&self.adapters)
+            .iter()
+            .map(|a| a.root().to_path_buf())
+            .collect();
         discovery::run_discovery(&self.db, &roots, &self.home, &known, &self.discovery_cancel)
     }
 
@@ -380,10 +416,20 @@ impl AppState {
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
-        let footprints_count = db.conn.query_row("SELECT COUNT(*) FROM project_footprints", [], |r| r.get(0))?;
-        let mut st = db.conn.prepare("SELECT path FROM discovery_denied ORDER BY path")?;
-        let denied = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-        Ok(DiscoveryView { candidates, footprints_count, denied })
+        let footprints_count =
+            db.conn
+                .query_row("SELECT COUNT(*) FROM project_footprints", [], |r| r.get(0))?;
+        let mut st = db
+            .conn
+            .prepare("SELECT path FROM discovery_denied ORDER BY path")?;
+        let denied = st
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(DiscoveryView {
+            candidates,
+            footprints_count,
+            denied,
+        })
     }
 
     /// Stores the decision, rebuilds the adapter list and, for "track", ingests the new source.
@@ -419,7 +465,10 @@ impl AppState {
         let range = period::resolve(spec, now());
         let csv = match kind {
             "sessions" => {
-                let f = SessionFilter { range: Some(range), ..Default::default() };
+                let f = SessionFilter {
+                    range: Some(range),
+                    ..Default::default()
+                };
                 export::sessions_csv(&query::sessions(&self.db(), &f)?)
             }
             "daily" => export::daily_csv(&query::daily(&self.db(), &range, now())?),
@@ -443,7 +492,10 @@ impl AppState {
         for a in read(&self.adapters).iter() {
             let root = std::fs::canonicalize(a.root()).unwrap_or_else(|_| a.root().to_path_buf());
             if target.starts_with(&root) {
-                bail!("Tidak boleh menulis ke folder data agent: {}", root.display());
+                bail!(
+                    "Tidak boleh menulis ke folder data agent: {}",
+                    root.display()
+                );
             }
         }
         Ok(())
@@ -483,7 +535,9 @@ mod tests {
     use std::fs;
 
     fn fixture(name: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name)
     }
 
     fn copy_dir(from: &Path, to: &Path) {
@@ -516,11 +570,18 @@ mod tests {
 
     /// Custom period covering the fixture date (2026-11-20).
     fn november() -> PeriodSpec {
-        PeriodSpec::Custom { start_ms: ms("2026-11-01T00:00:00Z"), end_ms: ms("2026-12-01T00:00:00Z") }
+        PeriodSpec::Custom {
+            start_ms: ms("2026-11-01T00:00:00Z"),
+            end_ms: ms("2026-12-01T00:00:00Z"),
+        }
     }
 
     fn count(s: &AppState, sql: &str) -> i64 {
-        s.db.lock().unwrap().conn.query_row(sql, [], |r| r.get(0)).unwrap()
+        s.db.lock()
+            .unwrap()
+            .conn
+            .query_row(sql, [], |r| r.get(0))
+            .unwrap()
     }
 
     #[test]
@@ -536,7 +597,10 @@ mod tests {
         let (_t, s) = setup();
         let r = s.ingest_all().unwrap();
         assert!(r.events > 0);
-        assert!(s.progress.read().unwrap().is_none(), "progress is cleared after ingest");
+        assert!(
+            s.progress.read().unwrap().is_none(),
+            "progress is cleared after ingest"
+        );
         let agents = s.agents().unwrap();
         let claude = agents.iter().find(|a| a.agent == "claude-code").unwrap();
         assert!(claude.detected);
@@ -554,7 +618,10 @@ mod tests {
         // Every event model has a resolved_prices row right after ingest (status unknown
         // without a catalog), so it shows as unpriced instead of disappearing.
         assert_eq!(
-            count(&s, "SELECT COUNT(*) FROM (SELECT DISTINCT provider_hint, model FROM events)"),
+            count(
+                &s,
+                "SELECT COUNT(*) FROM (SELECT DISTINCT provider_hint, model FROM events)"
+            ),
             count(&s, "SELECT COUNT(*) FROM resolved_prices")
         );
     }
@@ -571,26 +638,63 @@ mod tests {
         assert_eq!(st.retention_warning, None);
         assert_eq!(st.data_since_ms, None);
         let last_seen = chrono::Utc::now().timestamp_millis() - 25 * DAY_MS;
-        s.db.lock().unwrap().set_meta("last_seen_ms", &last_seen.to_string()).unwrap();
+        s.db.lock()
+            .unwrap()
+            .set_meta("last_seen_ms", &last_seen.to_string())
+            .unwrap();
         drop(s);
 
         let s = open(t.path());
         assert!(!s.first_run);
         let gap = s.gap_days.unwrap();
         assert!((24.9..25.1).contains(&gap), "{gap}");
-        assert!(s.status().unwrap().retention_warning.unwrap().contains("25 hari"));
-        let seen: i64 = s.db.lock().unwrap().get_meta("last_seen_ms").unwrap().unwrap().parse().unwrap();
-        assert!(seen > last_seen + 24 * DAY_MS, "open refreshes the heartbeat");
+        assert!(
+            s.status()
+                .unwrap()
+                .retention_warning
+                .unwrap()
+                .contains("25 hari")
+        );
+        let seen: i64 =
+            s.db.lock()
+                .unwrap()
+                .get_meta("last_seen_ms")
+                .unwrap()
+                .unwrap()
+                .parse()
+                .unwrap();
+        assert!(
+            seen > last_seen + 24 * DAY_MS,
+            "open refreshes the heartbeat"
+        );
     }
 
     #[test]
     fn agent_rows_follow_default_order_and_levels() {
         let (_t, s) = setup();
         s.ingest_all().unwrap();
-        let level = |s: &AppState, agent: &str| s.agents().unwrap().into_iter().find(|a| a.agent == agent).unwrap().level;
+        let level = |s: &AppState, agent: &str| {
+            s.agents()
+                .unwrap()
+                .into_iter()
+                .find(|a| a.agent == agent)
+                .unwrap()
+                .level
+        };
         let rows = s.agents().unwrap();
         let order: Vec<&str> = rows.iter().map(|r| r.agent.as_str()).collect();
-        assert_eq!(order, ["claude-code", "codex", "opencode", "gemini-cli", "copilot-cli", "claude-desktop", "vs-code"]);
+        assert_eq!(
+            order,
+            [
+                "claude-code",
+                "codex",
+                "opencode",
+                "gemini-cli",
+                "copilot-cli",
+                "claude-desktop",
+                "vs-code"
+            ]
+        );
         assert_eq!(rows[0].label, "Claude Code");
         assert!(!rows[1].detected);
         assert_eq!(level(&s, "claude-code"), "full");
@@ -604,7 +708,11 @@ mod tests {
             .unwrap();
         assert_eq!(level(&s, "gemini-cli"), "full");
         *s.running.write().unwrap() = vec![RunningAgent {
-            agent: AgentKind::Codex, pid: 7, cwd: None, started_ms: 0, session_hint: None,
+            agent: AgentKind::Codex,
+            pid: 7,
+            cwd: None,
+            started_ms: 0,
+            session_hint: None,
         }];
         let rows = s.agents().unwrap();
         assert_eq!(rows[1].running.len(), 1);
@@ -616,23 +724,56 @@ mod tests {
         let (t, s) = setup();
         assert!(s.trends(Granularity::Week, 0, Split::Agent).is_err());
         assert!(s.trends(Granularity::Week, 61, Split::Agent).is_err());
-        assert_eq!(s.trends(Granularity::Month, 60, Split::Agent).unwrap().len(), 60);
+        assert_eq!(
+            s.trends(Granularity::Month, 60, Split::Agent)
+                .unwrap()
+                .len(),
+            60
+        );
         let bad = [
-            PeriodSpec::Custom { start_ms: 10, end_ms: 10 },
-            PeriodSpec::Custom { start_ms: 10, end_ms: 5 },
-            PeriodSpec::Custom { start_ms: 0, end_ms: 1099 * DAY_MS },
-            PeriodSpec::Custom { start_ms: i64::MIN, end_ms: i64::MIN + DAY_MS },
-            PeriodSpec::Custom { start_ms: i64::MAX - DAY_MS, end_ms: i64::MAX },
+            PeriodSpec::Custom {
+                start_ms: 10,
+                end_ms: 10,
+            },
+            PeriodSpec::Custom {
+                start_ms: 10,
+                end_ms: 5,
+            },
+            PeriodSpec::Custom {
+                start_ms: 0,
+                end_ms: 1099 * DAY_MS,
+            },
+            PeriodSpec::Custom {
+                start_ms: i64::MIN,
+                end_ms: i64::MIN + DAY_MS,
+            },
+            PeriodSpec::Custom {
+                start_ms: i64::MAX - DAY_MS,
+                end_ms: i64::MAX,
+            },
         ];
         let out = t.path().join("out.csv");
         for p in &bad {
             assert!(s.overview(p).is_err(), "{p:?}");
             assert!(s.projects(p).is_err(), "{p:?}");
             assert!(s.models(p).is_err(), "{p:?}");
-            assert!(s.sessions(&SessionFilterArg { period: Some(p.clone()), ..Default::default() }).is_err(), "{p:?}");
+            assert!(
+                s.sessions(&SessionFilterArg {
+                    period: Some(p.clone()),
+                    ..Default::default()
+                })
+                .is_err(),
+                "{p:?}"
+            );
             assert!(s.export_csv("daily", p, &out).is_err(), "{p:?}");
         }
-        assert!(s.overview(&PeriodSpec::Custom { start_ms: 0, end_ms: 1098 * DAY_MS }).is_ok());
+        assert!(
+            s.overview(&PeriodSpec::Custom {
+                start_ms: 0,
+                end_ms: 1098 * DAY_MS
+            })
+            .is_ok()
+        );
         assert!(s.sessions(&SessionFilterArg::default()).is_ok());
     }
 
@@ -640,10 +781,26 @@ mod tests {
     fn sessions_filter_and_detail() {
         let (_t, s) = setup();
         s.ingest_all().unwrap();
-        let all = s.sessions(&SessionFilterArg { period: Some(november()), agent: Some("claude-code".into()), project_key: None }).unwrap();
+        let all = s
+            .sessions(&SessionFilterArg {
+                period: Some(november()),
+                agent: Some("claude-code".into()),
+                project_key: None,
+            })
+            .unwrap();
         assert!(!all.is_empty());
-        assert!(s.sessions(&SessionFilterArg { agent: Some("codex".into()), ..Default::default() }).unwrap().is_empty());
-        let d = s.session("claude-code", &all[0].session_id).unwrap().unwrap();
+        assert!(
+            s.sessions(&SessionFilterArg {
+                agent: Some("codex".into()),
+                ..Default::default()
+            })
+            .unwrap()
+            .is_empty()
+        );
+        let d = s
+            .session("claude-code", &all[0].session_id)
+            .unwrap()
+            .unwrap();
         assert!(!d.events.is_empty());
         assert!(s.session("claude-code", "nope").unwrap().is_none());
     }
@@ -660,7 +817,14 @@ mod tests {
         assert!(csv.lines().count() > 1);
         let daily = out_dir.path().join("daily.csv");
         s.export_csv("daily", &november(), &daily).unwrap();
-        assert!(fs::read_to_string(&daily).unwrap().lines().nth(1).unwrap().contains(",claude-code,"));
+        assert!(
+            fs::read_to_string(&daily)
+                .unwrap()
+                .lines()
+                .nth(1)
+                .unwrap()
+                .contains(",claude-code,")
+        );
 
         let inside = t.path().join(".claude/projects/export.csv");
         assert!(s.export_csv("sessions", &november(), &inside).is_err());
@@ -669,7 +833,10 @@ mod tests {
         let sneaky = t.path().join("Library/../.claude/x.csv");
         assert!(s.export_csv("sessions", &november(), &sneaky).is_err());
         assert!(s.export_csv("weekly", &november(), &out).is_err());
-        assert!(s.export_csv("sessions", &november(), Path::new("relative.csv")).is_err());
+        assert!(
+            s.export_csv("sessions", &november(), Path::new("relative.csv"))
+                .is_err()
+        );
     }
 
     #[test]
@@ -677,27 +844,46 @@ mod tests {
         let (t, s) = setup();
         let out_dir = tempfile::tempdir().unwrap();
         let link = out_dir.path().join("link.csv");
-        std::os::unix::fs::symlink(t.path().join(".claude/projects/-tmp-demo/sess-1.jsonl"), &link).unwrap();
+        std::os::unix::fs::symlink(
+            t.path().join(".claude/projects/-tmp-demo/sess-1.jsonl"),
+            &link,
+        )
+        .unwrap();
         let before = fs::read(t.path().join(".claude/projects/-tmp-demo/sess-1.jsonl")).unwrap();
         assert!(s.export_csv("sessions", &november(), &link).is_err());
-        assert_eq!(fs::read(t.path().join(".claude/projects/-tmp-demo/sess-1.jsonl")).unwrap(), before);
+        assert_eq!(
+            fs::read(t.path().join(".claude/projects/-tmp-demo/sess-1.jsonl")).unwrap(),
+            before
+        );
     }
 
     #[test]
     fn command_json_shapes_are_camel_case() {
         let f: SessionFilterArg =
-            serde_json::from_str(r#"{"period":{"kind":"today"},"agent":null,"projectKey":"/p"}"#).unwrap();
+            serde_json::from_str(r#"{"period":{"kind":"today"},"agent":null,"projectKey":"/p"}"#)
+                .unwrap();
         assert_eq!(f.period, Some(PeriodSpec::Today));
         assert_eq!(f.project_key.as_deref(), Some("/p"));
         let (_t, s) = setup();
         let v = serde_json::to_value(s.discovery().unwrap()).unwrap();
         assert!(v.get("footprintsCount").is_some() && v.get("denied").is_some());
         let st = serde_json::to_value(s.status().unwrap()).unwrap();
-        for k in ["firstRun", "gapDays", "retentionWarning", "progress", "pricing", "discoveryRunning", "dataSinceMs"] {
+        for k in [
+            "firstRun",
+            "gapDays",
+            "retentionWarning",
+            "progress",
+            "pricing",
+            "discoveryRunning",
+            "dataSinceMs",
+        ] {
             assert!(st.get(k).is_some(), "{k}");
         }
         let a = serde_json::to_value(&s.agents().unwrap()[0]).unwrap();
-        for k in ["agent", "label", "detected", "dataRoot", "level", "sessions", "firstMs", "lastMs", "running"] {
+        for k in [
+            "agent", "label", "detected", "dataRoot", "level", "sessions", "firstMs", "lastMs",
+            "running",
+        ] {
             assert!(a.get(k).is_some(), "{k}");
         }
     }
@@ -715,14 +901,21 @@ mod tests {
             )
             .unwrap();
         assert!(s.set_candidate_decision(&path, "maybe").is_err());
-        assert!(s.set_candidate_decision("/not/a/candidate", "track").is_err());
+        assert!(
+            s.set_candidate_decision("/not/a/candidate", "track")
+                .is_err()
+        );
 
         let r = s.set_candidate_decision(&path, "track").unwrap();
         assert!(r.sources_read > 0);
         assert_eq!(s.adapters.read().unwrap().len(), 8);
         assert_eq!(s.discovery().unwrap().candidates[0].decision, "track");
         let again = open(t.path());
-        assert_eq!(again.adapters.read().unwrap().len(), 8, "tracked adapters are restored on open");
+        assert_eq!(
+            again.adapters.read().unwrap().len(),
+            8,
+            "tracked adapters are restored on open"
+        );
         drop(again);
 
         s.set_candidate_decision(&path, "ignore").unwrap();
@@ -733,7 +926,11 @@ mod tests {
     fn discovery_runs_once_and_lists_candidates() {
         let (t, s) = setup();
         copy_dir(&fixture("claude"), &t.path().join("alt-claude"));
-        s.update_settings(&Settings { scan_roots: vec![t.path().to_string_lossy().into_owned()], ..s.settings() }).unwrap();
+        s.update_settings(&Settings {
+            scan_roots: vec![t.path().to_string_lossy().into_owned()],
+            ..s.settings()
+        })
+        .unwrap();
         assert!(s.run_discovery().unwrap());
         assert!(!s.status().unwrap().discovery_running);
         let v = s.discovery().unwrap();
@@ -743,12 +940,20 @@ mod tests {
         assert_eq!(v.candidates[0].decision, "pending");
         assert!(v.denied.is_empty());
 
-        s.discovery_running.store(true, std::sync::atomic::Ordering::SeqCst);
-        assert!(!s.run_discovery().unwrap(), "a second concurrent run is refused");
-        s.discovery_running.store(false, std::sync::atomic::Ordering::SeqCst);
+        s.discovery_running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            !s.run_discovery().unwrap(),
+            "a second concurrent run is refused"
+        );
+        s.discovery_running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         s.cancel_discovery();
         assert!(s.discovery_cancel.load(std::sync::atomic::Ordering::SeqCst));
-        assert!(s.run_discovery().unwrap(), "a new run resets the cancel flag");
+        assert!(
+            s.run_discovery().unwrap(),
+            "a new run resets the cancel flag"
+        );
     }
 
     #[test]
@@ -756,16 +961,59 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let s = open(t.path());
         let base = s.settings();
-        s.update_settings(&Settings { process_poll_secs: 0, ..base.clone() }).unwrap();
-        assert_eq!(s.settings().process_poll_secs, 1, "poll interval is clamped up to 1 s");
-        s.update_settings(&Settings { process_poll_secs: 99_999, ..base.clone() }).unwrap();
-        assert_eq!(s.settings().process_poll_secs, 3600, "poll interval is clamped down to 1 h");
-        for roots in [vec![], vec![String::new()], vec!["relative/dir".to_string()]] {
-            assert!(s.update_settings(&Settings { scan_roots: roots.clone(), ..base.clone() }).is_err(), "{roots:?}");
+        s.update_settings(&Settings {
+            process_poll_secs: 0,
+            ..base.clone()
+        })
+        .unwrap();
+        assert_eq!(
+            s.settings().process_poll_secs,
+            1,
+            "poll interval is clamped up to 1 s"
+        );
+        s.update_settings(&Settings {
+            process_poll_secs: 99_999,
+            ..base.clone()
+        })
+        .unwrap();
+        assert_eq!(
+            s.settings().process_poll_secs,
+            3600,
+            "poll interval is clamped down to 1 h"
+        );
+        for roots in [
+            vec![],
+            vec![String::new()],
+            vec!["relative/dir".to_string()],
+        ] {
+            assert!(
+                s.update_settings(&Settings {
+                    scan_roots: roots.clone(),
+                    ..base.clone()
+                })
+                .is_err(),
+                "{roots:?}"
+            );
         }
-        assert!(s.update_settings(&Settings { idr_rate: Some(-1.0), ..base.clone() }).is_err());
-        assert!(s.update_settings(&Settings { idr_rate: Some(f64::NAN), ..base.clone() }).is_err());
-        let new = Settings { process_poll_secs: 15, idr_rate: Some(16000.0), ..base };
+        assert!(
+            s.update_settings(&Settings {
+                idr_rate: Some(-1.0),
+                ..base.clone()
+            })
+            .is_err()
+        );
+        assert!(
+            s.update_settings(&Settings {
+                idr_rate: Some(f64::NAN),
+                ..base.clone()
+            })
+            .is_err()
+        );
+        let new = Settings {
+            process_poll_secs: 15,
+            idr_rate: Some(16000.0),
+            ..base
+        };
         s.update_settings(&new).unwrap();
         assert_eq!(s.settings(), new);
         drop(s);
@@ -777,29 +1025,64 @@ mod tests {
         let (_t, s) = setup();
         s.ingest_all().unwrap();
         let st = s.refresh_prices(&|| {
-            Ok(vec![OrModel { id: "anthropic/claude-opus-5.5".into(), prompt: 5e-6, completion: 25e-6, cache_read: None, cache_write: None }])
+            Ok(vec![OrModel {
+                id: "anthropic/claude-opus-5.5".into(),
+                prompt: 5e-6,
+                completion: 25e-6,
+                cache_read: None,
+                cache_write: None,
+            }])
         });
         assert_eq!(st.catalog_size, 1);
-        assert_eq!(s.price_catalog().unwrap(), vec!["anthropic/claude-opus-5.5".to_string()]);
+        assert_eq!(
+            s.price_catalog().unwrap(),
+            vec!["anthropic/claude-opus-5.5".to_string()]
+        );
         let o = ModelOverride {
-            provider_hint: "anthropic".into(), raw_model: "x".into(), action: "bogus".into(),
-            openrouter_id: None, prompt: None, completion: None, cache_read: None, cache_write: None,
+            provider_hint: "anthropic".into(),
+            raw_model: "x".into(),
+            action: "bogus".into(),
+            openrouter_id: None,
+            prompt: None,
+            completion: None,
+            cache_read: None,
+            cache_write: None,
         };
         assert!(s.set_model_override(&o).is_err());
-        s.set_model_override(&ModelOverride { action: "ignore".into(), ..o }).unwrap();
-        assert_eq!(count(&s, "SELECT COUNT(*) FROM model_overrides WHERE raw_model = 'x'"), 1);
+        s.set_model_override(&ModelOverride {
+            action: "ignore".into(),
+            ..o
+        })
+        .unwrap();
+        assert_eq!(
+            count(
+                &s,
+                "SELECT COUNT(*) FROM model_overrides WHERE raw_model = 'x'"
+            ),
+            1
+        );
     }
 
     #[test]
     fn wipe_clears_data_but_keeps_settings_and_heartbeat() {
         let (_t, s) = setup();
         s.ingest_all().unwrap();
-        s.update_settings(&Settings { process_poll_secs: 9, ..s.settings() }).unwrap();
+        s.update_settings(&Settings {
+            process_poll_secs: 9,
+            ..s.settings()
+        })
+        .unwrap();
         s.wipe_all().unwrap();
         assert_eq!(count(&s, "SELECT COUNT(*) FROM events"), 0);
         assert_eq!(count(&s, "SELECT COUNT(*) FROM source_state"), 0);
         assert_eq!(s.settings().process_poll_secs, 9);
-        assert!(s.db.lock().unwrap().get_meta("last_seen_ms").unwrap().is_some());
+        assert!(
+            s.db.lock()
+                .unwrap()
+                .get_meta("last_seen_ms")
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -826,9 +1109,17 @@ mod tests {
         assert!(count(&s, "SELECT COUNT(*) FROM events") > 0);
         assert_eq!(s.adapters.read().unwrap().len(), 8);
         s.wipe_all().unwrap();
-        assert_eq!(s.adapters.read().unwrap().len(), 7, "track decisions are wiped, so is the adapter");
+        assert_eq!(
+            s.adapters.read().unwrap().len(),
+            7,
+            "track decisions are wiped, so is the adapter"
+        );
         s.ingest_all().unwrap();
-        assert_eq!(count(&s, "SELECT COUNT(*) FROM events"), 0, "the untracked source is not re-ingested");
+        assert_eq!(
+            count(&s, "SELECT COUNT(*) FROM events"),
+            0,
+            "the untracked source is not re-ingested"
+        );
     }
 
     #[test]
@@ -850,18 +1141,42 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         drop(open(t.path()));
         let db_path = AppState::db_path(t.path());
-        Db::open(&db_path).unwrap().conn.execute("UPDATE settings SET value = 'garbage' WHERE key = 'app'", []).unwrap();
+        Db::open(&db_path)
+            .unwrap()
+            .conn
+            .execute(
+                "UPDATE settings SET value = 'garbage' WHERE key = 'app'",
+                [],
+            )
+            .unwrap();
         let s = open(t.path());
-        assert!(!s.first_run, "corrupt settings must not re-trigger first-run actions");
+        assert!(
+            !s.first_run,
+            "corrupt settings must not re-trigger first-run actions"
+        );
         assert_eq!(s.settings(), Settings::defaults(t.path()));
-        let raw: String = s.db.lock().unwrap().conn.query_row("SELECT value FROM settings WHERE key = 'app'", [], |r| r.get(0)).unwrap();
-        assert_eq!(raw, "garbage", "the stored value is not overwritten on open");
+        let raw: String =
+            s.db.lock()
+                .unwrap()
+                .conn
+                .query_row("SELECT value FROM settings WHERE key = 'app'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+        assert_eq!(
+            raw, "garbage",
+            "the stored value is not overwritten on open"
+        );
     }
 
     #[test]
     fn begin_discovery_marks_running_until_the_run_ends() {
         let (_t, s) = setup();
-        s.update_settings(&Settings { scan_roots: vec![_t.path().to_string_lossy().into_owned()], ..s.settings() }).unwrap();
+        s.update_settings(&Settings {
+            scan_roots: vec![_t.path().to_string_lossy().into_owned()],
+            ..s.settings()
+        })
+        .unwrap();
         s.cancel_discovery();
         assert!(s.begin_discovery());
         assert!(s.status().unwrap().discovery_running);

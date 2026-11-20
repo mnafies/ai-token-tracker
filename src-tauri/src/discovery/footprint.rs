@@ -30,7 +30,11 @@ pub struct Footprint {
     pub marker: String,
 }
 
-pub fn scan_footprints(roots: &[PathBuf], home: &Path, cancel: &AtomicBool) -> (Vec<Footprint>, Vec<PathBuf>) {
+pub fn scan_footprints(
+    roots: &[PathBuf],
+    home: &Path,
+    cancel: &AtomicBool,
+) -> (Vec<Footprint>, Vec<PathBuf>) {
     let mut denied = Vec::new();
     let mut found: BTreeSet<Footprint> = BTreeSet::new();
     walk_pruned(
@@ -44,13 +48,19 @@ pub fn scan_footprints(roots: &[PathBuf], home: &Path, cancel: &AtomicBool) -> (
             if is_dir && e.depth() > 0 && name.starts_with('.') && parent == Some(home) {
                 return false; // home config dirs are not projects
             }
-            let Some(agent) = marker_agent(&name, is_dir) else { return true };
-            let Some(mut folder) = parent else { return true };
+            let Some(agent) = marker_agent(&name, is_dir) else {
+                return true;
+            };
+            let Some(mut folder) = parent else {
+                return true;
+            };
             if name == "copilot-instructions.md" {
                 if folder.file_name().is_none_or(|n| n != ".github") {
                     return true;
                 }
-                let Some(up) = folder.parent() else { return true };
+                let Some(up) = folder.parent() else {
+                    return true;
+                };
                 folder = up;
             }
             // Home-level .claude/.codex/.gemini never reach here: home dot-dirs are pruned above.

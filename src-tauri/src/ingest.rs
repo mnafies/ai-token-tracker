@@ -83,7 +83,9 @@ enum Outcome {
 }
 
 fn ingest_source(db: &Mutex<Db>, a: &dyn Adapter, src: &Source) -> anyhow::Result<Outcome> {
-    let Some((size, mtime_ms)) = fingerprint(src) else { return Ok(Outcome::Skipped) };
+    let Some((size, mtime_ms)) = fingerprint(src) else {
+        return Ok(Outcome::Skipped);
+    };
     let path = src.path.to_string_lossy();
     let stored = lock(db)?.source_state(&path)?;
     let prev = match stored {
@@ -97,14 +99,25 @@ fn ingest_source(db: &Mutex<Db>, a: &dyn Adapter, src: &Source) -> anyhow::Resul
     let (out, parsed) = a.parse(src, &prev)?;
     // Persist the pre-parse fingerprint: if the source grew while we parsed, the next
     // ingest sees a mismatch and reads the rest instead of skipping it forever.
-    let state = SourceState { size, mtime_ms, ..parsed };
+    let state = SourceState {
+        size,
+        mtime_ms,
+        ..parsed
+    };
     let mut guard = lock(db)?;
     guard.apply_parse(&path, a.kind(), &out, &state)?;
     ensure_cwd_projects(&guard, &cwds_of(&out))?;
-    Ok(Outcome::Read { events: out.events.len(), sessions: out.sessions.len() })
+    Ok(Outcome::Read {
+        events: out.events.len(),
+        sessions: out.sessions.len(),
+    })
 }
 
-pub fn ingest_adapter(db: &Mutex<Db>, a: &dyn Adapter, on_progress: &dyn Fn(Progress)) -> anyhow::Result<IngestReport> {
+pub fn ingest_adapter(
+    db: &Mutex<Db>,
+    a: &dyn Adapter,
+    on_progress: &dyn Fn(Progress),
+) -> anyhow::Result<IngestReport> {
     let sources = a.sources();
     let total = sources.len();
     let mut report = IngestReport::default();
@@ -117,16 +130,28 @@ pub fn ingest_adapter(db: &Mutex<Db>, a: &dyn Adapter, on_progress: &dyn Fn(Prog
                 report.sessions += sessions;
             }
             Err(e) => {
-                eprintln!("ingest {}: {}: {e:#}", a.kind().as_str(), src.path.display());
+                eprintln!(
+                    "ingest {}: {}: {e:#}",
+                    a.kind().as_str(),
+                    src.path.display()
+                );
                 report.errors += 1;
             }
         }
-        on_progress(Progress { agent: a.kind(), done: i + 1, total });
+        on_progress(Progress {
+            agent: a.kind(),
+            done: i + 1,
+            total,
+        });
     }
     Ok(report)
 }
 
-pub fn ingest_all(db: &Mutex<Db>, adapters: &[Box<dyn Adapter>], on_progress: &dyn Fn(Progress)) -> anyhow::Result<IngestReport> {
+pub fn ingest_all(
+    db: &Mutex<Db>,
+    adapters: &[Box<dyn Adapter>],
+    on_progress: &dyn Fn(Progress),
+) -> anyhow::Result<IngestReport> {
     let mut total = IngestReport::default();
     for a in adapters {
         total.add(&ingest_adapter(db, a.as_ref(), on_progress)?);
@@ -143,7 +168,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     fn fixture(name: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name)
     }
 
     fn copy_dir(from: &Path, to: &Path) {
@@ -170,7 +197,11 @@ mod tests {
     }
 
     fn count(db: &Mutex<Db>, sql: &str) -> i64 {
-        db.lock().unwrap().conn.query_row(sql, [], |r| r.get(0)).unwrap()
+        db.lock()
+            .unwrap()
+            .conn
+            .query_row(sql, [], |r| r.get(0))
+            .unwrap()
     }
 
     fn events(db: &Mutex<Db>) -> i64 {
@@ -192,7 +223,12 @@ mod tests {
     }
 
     fn append(path: &Path, s: &str) {
-        fs::OpenOptions::new().append(true).open(path).unwrap().write_all(s.as_bytes()).unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .unwrap()
+            .write_all(s.as_bytes())
+            .unwrap();
     }
 
     #[test]
@@ -215,7 +251,10 @@ mod tests {
         let db = db();
         run(&db, a.as_ref());
         let before = events(&db);
-        append(&claude_session(t.path()), &format!("{}\n", assistant_line("msg_NEW")));
+        append(
+            &claude_session(t.path()),
+            &format!("{}\n", assistant_line("msg_NEW")),
+        );
         let r = run(&db, a.as_ref());
         assert_eq!(r.sources_read, 1);
         assert_eq!(events(&db), before + 1);
@@ -268,8 +307,17 @@ mod tests {
         fs::write(&path, subset).unwrap();
         run(&db, a.as_ref());
         assert_eq!(events(&db), before + 1);
-        assert_eq!(count(&db, "SELECT COUNT(DISTINCT event_key) FROM events"), before + 1);
-        assert_eq!(count(&db, "SELECT COUNT(*) FROM events WHERE event_key = 'claude:msg_A'"), 1);
+        assert_eq!(
+            count(&db, "SELECT COUNT(DISTINCT event_key) FROM events"),
+            before + 1
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM events WHERE event_key = 'claude:msg_A'"
+            ),
+            1
+        );
     }
 
     #[test]
@@ -295,7 +343,13 @@ mod tests {
         let a = adapter_for(AgentKind::ClaudeCode, t.path().to_path_buf());
         let db = db();
         run(&db, a.as_ref());
-        assert_eq!(count(&db, "SELECT COUNT(*) FROM cwd_projects WHERE cwd = '/tmp/demo'"), 1);
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM cwd_projects WHERE cwd = '/tmp/demo'"
+            ),
+            1
+        );
     }
 
     /// Wraps a real adapter; after its parse, appends one line to the source (once)
@@ -318,9 +372,15 @@ mod tests {
         fn sources(&self) -> Vec<Source> {
             self.inner.sources()
         }
-        fn parse(&self, src: &Source, prev: &SourceState) -> anyhow::Result<(ParseOutput, SourceState)> {
+        fn parse(
+            &self,
+            src: &Source,
+            prev: &SourceState,
+        ) -> anyhow::Result<(ParseOutput, SourceState)> {
             let (out, mut state) = self.inner.parse(src, prev)?;
-            if src.path.ends_with("sess-1.jsonl") && !self.grown.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            if src.path.ends_with("sess-1.jsonl")
+                && !self.grown.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
                 append(&src.path, &format!("{}\n", assistant_line("msg_NEW")));
                 let meta = fs::metadata(&src.path)?;
                 state.size = meta.len();
@@ -342,7 +402,12 @@ mod tests {
         let db = db();
         run(&db, &growing);
         let before = events(&db);
-        let stored = db.lock().unwrap().source_state(&path.to_string_lossy()).unwrap().unwrap();
+        let stored = db
+            .lock()
+            .unwrap()
+            .source_state(&path.to_string_lossy())
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.size, pre_parse_size);
         assert!(fs::metadata(&path).unwrap().len() > pre_parse_size);
 

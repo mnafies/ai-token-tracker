@@ -1,7 +1,7 @@
 use crate::adapters::SourceState;
 use crate::model::{AgentKind, ParseOutput};
 use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 
 pub struct Db {
@@ -27,12 +27,20 @@ impl Db {
     fn migrate(conn: Connection) -> Result<Db> {
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version == 0 {
-            conn.execute_batch(&format!("BEGIN;\n{SCHEMA_V1}\nPRAGMA user_version = 1;\nCOMMIT;"))?;
+            conn.execute_batch(&format!(
+                "BEGIN;\n{SCHEMA_V1}\nPRAGMA user_version = 1;\nCOMMIT;"
+            ))?;
         }
         Ok(Db { conn })
     }
 
-    pub fn apply_parse(&mut self, source_path: &str, agent: AgentKind, out: &ParseOutput, state: &SourceState) -> Result<()> {
+    pub fn apply_parse(
+        &mut self,
+        source_path: &str,
+        agent: AgentKind,
+        out: &ParseOutput,
+        state: &SourceState,
+    ) -> Result<()> {
         let tx = self.conn.transaction()?;
         {
             let mut ev = tx.prepare_cached(
@@ -44,8 +52,18 @@ impl Db {
             )?;
             for e in &out.events {
                 ev.execute(params![
-                    e.event_key, e.agent.as_str(), e.session_id, e.ts_ms, e.cwd, e.model, e.provider_hint,
-                    e.input, e.output, e.reasoning, e.cache_read, e.cache_write
+                    e.event_key,
+                    e.agent.as_str(),
+                    e.session_id,
+                    e.ts_ms,
+                    e.cwd,
+                    e.model,
+                    e.provider_hint,
+                    e.input,
+                    e.output,
+                    e.reasoning,
+                    e.cache_read,
+                    e.cache_write
                 ])?;
             }
             let mut se = tx.prepare_cached(
@@ -65,7 +83,13 @@ impl Db {
             )?;
             for s in &out.sessions {
                 se.execute(params![
-                    s.agent.as_str(), s.session_id, s.cwd, s.title, s.started_ms, s.updated_ms, s.token_status.as_str()
+                    s.agent.as_str(),
+                    s.session_id,
+                    s.cwd,
+                    s.title,
+                    s.started_ms,
+                    s.updated_ms,
+                    s.token_status.as_str()
                 ])?;
             }
             tx.execute(
@@ -80,11 +104,19 @@ impl Db {
     }
 
     pub fn source_state(&self, source_path: &str) -> Result<Option<SourceState>> {
-        let row = self.conn
+        let row = self
+            .conn
             .query_row(
                 "SELECT offset, size, mtime_ms, context FROM source_state WHERE path = ?1",
                 params![source_path],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                },
             )
             .optional()?;
         match row {
@@ -99,8 +131,13 @@ impl Db {
     }
 
     pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
-        Ok(self.conn
-            .query_row("SELECT value FROM app_meta WHERE key = ?1", params![key], |r| r.get(0))
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT value FROM app_meta WHERE key = ?1",
+                params![key],
+                |r| r.get(0),
+            )
             .optional()?)
     }
 
@@ -116,8 +153,16 @@ impl Db {
     pub fn wipe_all(&mut self) -> Result<()> {
         let tx = self.conn.transaction()?;
         for t in [
-            "events", "sessions", "cwd_projects", "source_state", "prices", "resolved_prices",
-            "app_meta", "discovery_candidates", "discovery_denied", "project_footprints",
+            "events",
+            "sessions",
+            "cwd_projects",
+            "source_state",
+            "prices",
+            "resolved_prices",
+            "app_meta",
+            "discovery_candidates",
+            "discovery_denied",
+            "project_footprints",
         ] {
             tx.execute(&format!("DELETE FROM {t}"), [])?;
         }
@@ -133,15 +178,29 @@ mod tests {
 
     fn ev(key: &str, output: i64) -> UsageEvent {
         UsageEvent {
-            agent: AgentKind::ClaudeCode, event_key: key.into(), session_id: "s1".into(), ts_ms: 1000,
-            cwd: Some("/p".into()), model: "m".into(), provider_hint: "anthropic".into(),
-            input: 1, output, reasoning: 0, cache_read: 0, cache_write: 0,
+            agent: AgentKind::ClaudeCode,
+            event_key: key.into(),
+            session_id: "s1".into(),
+            ts_ms: 1000,
+            cwd: Some("/p".into()),
+            model: "m".into(),
+            provider_hint: "anthropic".into(),
+            input: 1,
+            output,
+            reasoning: 0,
+            cache_read: 0,
+            cache_write: 0,
         }
     }
     fn sess(started: i64, updated: i64, title: Option<&str>) -> SessionMeta {
         SessionMeta {
-            agent: AgentKind::ClaudeCode, session_id: "s1".into(), cwd: None, title: title.map(String::from),
-            started_ms: Some(started), updated_ms: Some(updated), token_status: TokenStatus::Recorded,
+            agent: AgentKind::ClaudeCode,
+            session_id: "s1".into(),
+            cwd: None,
+            title: title.map(String::from),
+            started_ms: Some(started),
+            updated_ms: Some(updated),
+            token_status: TokenStatus::Recorded,
         }
     }
 
@@ -149,12 +208,28 @@ mod tests {
     fn apply_parse_is_idempotent_and_last_write_wins() {
         let mut db = Db::open_in_memory().unwrap();
         let st = SourceState::default();
-        let o1 = ParseOutput { events: vec![ev("k1", 10)], sessions: vec![] };
-        db.apply_parse("/f", AgentKind::ClaudeCode, &o1, &st).unwrap();
-        let o2 = ParseOutput { events: vec![ev("k1", 50)], sessions: vec![] };
-        db.apply_parse("/f", AgentKind::ClaudeCode, &o2, &st).unwrap();
-        let n: i64 = db.conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap();
-        let out: i64 = db.conn.query_row("SELECT output FROM events WHERE event_key='k1'", [], |r| r.get(0)).unwrap();
+        let o1 = ParseOutput {
+            events: vec![ev("k1", 10)],
+            sessions: vec![],
+        };
+        db.apply_parse("/f", AgentKind::ClaudeCode, &o1, &st)
+            .unwrap();
+        let o2 = ParseOutput {
+            events: vec![ev("k1", 50)],
+            sessions: vec![],
+        };
+        db.apply_parse("/f", AgentKind::ClaudeCode, &o2, &st)
+            .unwrap();
+        let n: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
+            .unwrap();
+        let out: i64 = db
+            .conn
+            .query_row("SELECT output FROM events WHERE event_key='k1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(n, 1);
         assert_eq!(out, 50);
     }
@@ -163,12 +238,25 @@ mod tests {
     fn session_merge_keeps_min_start_max_update_and_latest_title() {
         let mut db = Db::open_in_memory().unwrap();
         let st = SourceState::default();
-        let o1 = ParseOutput { events: vec![], sessions: vec![sess(200, 300, None)] };
-        db.apply_parse("/f", AgentKind::ClaudeCode, &o1, &st).unwrap();
-        let o2 = ParseOutput { events: vec![], sessions: vec![sess(100, 250, Some("T"))] };
-        db.apply_parse("/f", AgentKind::ClaudeCode, &o2, &st).unwrap();
-        let (s, u, t): (i64, i64, String) = db.conn
-            .query_row("SELECT started_ms, updated_ms, title FROM sessions", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        let o1 = ParseOutput {
+            events: vec![],
+            sessions: vec![sess(200, 300, None)],
+        };
+        db.apply_parse("/f", AgentKind::ClaudeCode, &o1, &st)
+            .unwrap();
+        let o2 = ParseOutput {
+            events: vec![],
+            sessions: vec![sess(100, 250, Some("T"))],
+        };
+        db.apply_parse("/f", AgentKind::ClaudeCode, &o2, &st)
+            .unwrap();
+        let (s, u, t): (i64, i64, String) = db
+            .conn
+            .query_row(
+                "SELECT started_ms, updated_ms, title FROM sessions",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
             .unwrap();
         assert_eq!((s, u, t.as_str()), (100, 300, "T"));
     }
@@ -176,8 +264,14 @@ mod tests {
     #[test]
     fn source_state_roundtrip() {
         let mut db = Db::open_in_memory().unwrap();
-        let st = SourceState { offset: 42, size: 100, mtime_ms: 7, context: serde_json::json!({"m":"x"}) };
-        db.apply_parse("/f", AgentKind::Codex, &ParseOutput::default(), &st).unwrap();
+        let st = SourceState {
+            offset: 42,
+            size: 100,
+            mtime_ms: 7,
+            context: serde_json::json!({"m":"x"}),
+        };
+        db.apply_parse("/f", AgentKind::Codex, &ParseOutput::default(), &st)
+            .unwrap();
         assert_eq!(db.source_state("/f").unwrap(), Some(st));
         assert_eq!(db.source_state("/none").unwrap(), None);
     }
@@ -185,14 +279,29 @@ mod tests {
     #[test]
     fn wipe_all_keeps_settings() {
         let mut db = Db::open_in_memory().unwrap();
-        db.conn.execute("INSERT INTO settings(key,value) VALUES('a','b')", []).unwrap();
-        let o = ParseOutput { events: vec![ev("k1", 1)], sessions: vec![] };
-        db.apply_parse("/f", AgentKind::ClaudeCode, &o, &SourceState::default()).unwrap();
+        db.conn
+            .execute("INSERT INTO settings(key,value) VALUES('a','b')", [])
+            .unwrap();
+        let o = ParseOutput {
+            events: vec![ev("k1", 1)],
+            sessions: vec![],
+        };
+        db.apply_parse("/f", AgentKind::ClaudeCode, &o, &SourceState::default())
+            .unwrap();
         db.wipe_all().unwrap();
-        let e: i64 = db.conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap();
-        let s: i64 = db.conn.query_row("SELECT COUNT(*) FROM settings", [], |r| r.get(0)).unwrap();
+        let e: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
+            .unwrap();
+        let s: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM settings", [], |r| r.get(0))
+            .unwrap();
         assert_eq!((e, s), (0, 1));
-        let m: i64 = db.conn.query_row("SELECT COUNT(*) FROM model_overrides", [], |r| r.get(0)).unwrap();
+        let m: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM model_overrides", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(m, 2);
     }
 }

@@ -18,23 +18,36 @@ impl Adapter for CopilotAdapter {
         self.root.exists()
     }
     fn sources(&self) -> Vec<Source> {
-        let Ok(rd) = std::fs::read_dir(self.root.join("session-state")) else { return Vec::new() };
+        let Ok(rd) = std::fs::read_dir(self.root.join("session-state")) else {
+            return Vec::new();
+        };
         let mut v: Vec<Source> = rd
             .flatten()
             .filter(|e| e.path().is_dir())
-            .map(|e| Source { path: e.path(), kind: SourceKind::Dir })
+            .map(|e| Source {
+                path: e.path(),
+                kind: SourceKind::Dir,
+            })
             .collect();
         v.sort_by(|a, b| a.path.cmp(&b.path));
         v
     }
-    fn parse(&self, src: &Source, _prev: &SourceState) -> anyhow::Result<(ParseOutput, SourceState)> {
+    fn parse(
+        &self,
+        src: &Source,
+        _prev: &SourceState,
+    ) -> anyhow::Result<(ParseOutput, SourceState)> {
         let mtime_ms = std::fs::metadata(&src.path)?
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        let session_id = src.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let session_id = src
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let meta = SessionMeta {
             agent: AgentKind::CopilotCli,
             session_id,
@@ -45,8 +58,16 @@ impl Adapter for CopilotAdapter {
             token_status: TokenStatus::NotRecorded,
         };
         Ok((
-            ParseOutput { events: Vec::new(), sessions: vec![meta] },
-            SourceState { offset: 0, size: 0, mtime_ms, context: Value::Null },
+            ParseOutput {
+                events: Vec::new(),
+                sessions: vec![meta],
+            },
+            SourceState {
+                offset: 0,
+                size: 0,
+                mtime_ms,
+                context: Value::Null,
+            },
         ))
     }
 }
@@ -63,7 +84,9 @@ mod tests {
             std::fs::create_dir_all(dir.path().join("session-state").join(n)).unwrap();
         }
         std::fs::write(dir.path().join("session-state/stray.txt"), "x").unwrap();
-        let a = CopilotAdapter { root: dir.path().to_path_buf() };
+        let a = CopilotAdapter {
+            root: dir.path().to_path_buf(),
+        };
         assert!(a.detect());
         let srcs = a.sources();
         assert_eq!(srcs.len(), 2);

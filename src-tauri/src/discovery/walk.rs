@@ -2,14 +2,35 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use walkdir::{DirEntry, WalkDir};
 
-pub const SKIP_DIRS: &[&str] = &["node_modules", ".git", "vendor", "target", "dist", "build", ".venv", ".Trash"];
+pub const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    ".git",
+    "vendor",
+    "target",
+    "dist",
+    "build",
+    ".venv",
+    ".Trash",
+];
 pub const SKIP_PATHS: &[&str] = &["Library/Caches", "Library/Containers"]; // relative to home
 
-pub fn walk(roots: &[PathBuf], home: &Path, cancel: &AtomicBool, visit: &mut dyn FnMut(&DirEntry), denied: &mut Vec<PathBuf>) {
-    walk_pruned(roots, home, cancel, &mut |e| {
-        visit(e);
-        true
-    }, denied);
+pub fn walk(
+    roots: &[PathBuf],
+    home: &Path,
+    cancel: &AtomicBool,
+    visit: &mut dyn FnMut(&DirEntry),
+    denied: &mut Vec<PathBuf>,
+) {
+    walk_pruned(
+        roots,
+        home,
+        cancel,
+        &mut |e| {
+            visit(e);
+            true
+        },
+        denied,
+    );
 }
 
 /// Like `walk`, but `visit` returns false to not descend into a directory.
@@ -45,7 +66,8 @@ pub fn walk_pruned(
                 }
                 Err(err) => {
                     let perm = err.io_error().is_some_and(|io| {
-                        io.kind() == std::io::ErrorKind::PermissionDenied || matches!(io.raw_os_error(), Some(1) | Some(13))
+                        io.kind() == std::io::ErrorKind::PermissionDenied
+                            || matches!(io.raw_os_error(), Some(1) | Some(13))
                     });
                     if perm {
                         if let Some(p) = err.path() {

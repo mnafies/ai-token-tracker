@@ -60,14 +60,25 @@ mod tests {
         let missing = t.path().join("does-not-exist");
         let (tx, rx) = mpsc::channel();
         let _w = spawn_watcher(
-            vec![(AgentKind::Codex, t.path().to_path_buf()), (AgentKind::GeminiCli, missing)],
+            vec![
+                (AgentKind::Codex, t.path().to_path_buf()),
+                (AgentKind::GeminiCli, missing),
+            ],
             move |k| {
                 let _ = tx.send(k);
             },
         )
         .unwrap();
         std::thread::sleep(Duration::from_millis(300));
-        std::fs::OpenOptions::new().append(true).open(&file).unwrap().write_all(b"{}\n").unwrap();
-        assert_eq!(rx.recv_timeout(Duration::from_secs(10)).unwrap(), AgentKind::Codex);
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap()
+            .write_all(b"{}\n")
+            .unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+            AgentKind::Codex
+        );
     }
 }

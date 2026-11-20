@@ -2,7 +2,7 @@ use crate::db::Db;
 use crate::period::{self, PeriodRange, PeriodSpec};
 use crate::project;
 use chrono::{DateTime, FixedOffset, Months, NaiveDate};
-use rusqlite::{params, Row};
+use rusqlite::{Row, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -185,12 +185,19 @@ fn read_totals(r: &Row, i: usize) -> rusqlite::Result<Totals> {
 }
 
 fn local_date(ms: i64, tz: FixedOffset) -> NaiveDate {
-    DateTime::from_timestamp_millis(ms).expect("valid timestamp").with_timezone(&tz).date_naive()
+    DateTime::from_timestamp_millis(ms)
+        .expect("valid timestamp")
+        .with_timezone(&tz)
+        .date_naive()
 }
 
 pub fn totals(db: &Db, r: &PeriodRange) -> anyhow::Result<Totals> {
     let sql = format!("{} SELECT {TOTALS_COLS} FROM ev WHERE {IN_RANGE}", ev_cte());
-    Ok(db.conn.query_row(&sql, params![r.start_ms, r.end_ms], |row| read_totals(row, 0))?)
+    Ok(db
+        .conn
+        .query_row(&sql, params![r.start_ms, r.end_ms], |row| {
+            read_totals(row, 0)
+        })?)
 }
 
 /// Cost change from `prev` to `cur` in percent; `None` when there was no previous cost.
@@ -198,14 +205,24 @@ pub fn change_pct(cur: f64, prev: f64) -> Option<f64> {
     (prev != 0.0).then(|| (cur - prev) / prev * 100.0)
 }
 
-pub fn overview(db: &Db, spec: &PeriodSpec, now: DateTime<FixedOffset>) -> anyhow::Result<Overview> {
+pub fn overview(
+    db: &Db,
+    spec: &PeriodSpec,
+    now: DateTime<FixedOffset>,
+) -> anyhow::Result<Overview> {
     let range = period::resolve(spec, now);
     let cur = totals(db, &range)?;
     let prev = totals(db, &period::previous(spec, now))?;
     let change_pct = change_pct(cur.cost_usd, prev.cost_usd);
     let mut top_projects = projects(db, &range)?;
     top_projects.truncate(5);
-    let mut top_sessions = sessions(db, &SessionFilter { range: Some(range), ..Default::default() })?;
+    let mut top_sessions = sessions(
+        db,
+        &SessionFilter {
+            range: Some(range),
+            ..Default::default()
+        },
+    )?;
     top_sessions.sort_by(|a, b| b.cost_usd.total_cmp(&a.cost_usd));
     top_sessions.truncate(5);
     Ok(Overview {
@@ -220,7 +237,11 @@ pub fn overview(db: &Db, spec: &PeriodSpec, now: DateTime<FixedOffset>) -> anyho
 }
 
 /// One point per local day in the range, including empty days.
-pub fn daily(db: &Db, r: &PeriodRange, now: DateTime<FixedOffset>) -> anyhow::Result<Vec<DailyPoint>> {
+pub fn daily(
+    db: &Db,
+    r: &PeriodRange,
+    now: DateTime<FixedOffset>,
+) -> anyhow::Result<Vec<DailyPoint>> {
     let sql = format!(
         "{} SELECT date(ts_ms/1000 + ?3, 'unixepoch') AS d, agent, COALESCE(SUM(cost), 0), SUM(tokens),
            COALESCE(SUM(CASE WHEN cost IS NULL THEN tokens END), 0)
@@ -229,7 +250,11 @@ pub fn daily(db: &Db, r: &PeriodRange, now: DateTime<FixedOffset>) -> anyhow::Re
     );
     let mut by_day: HashMap<String, Vec<AgentCost>> = HashMap::new();
     let mut stmt = db.conn.prepare(&sql)?;
-    let mut rows = stmt.query(params![r.start_ms, r.end_ms, now.offset().local_minus_utc()])?;
+    let mut rows = stmt.query(params![
+        r.start_ms,
+        r.end_ms,
+        now.offset().local_minus_utc()
+    ])?;
     while let Some(row) = rows.next()? {
         by_day.entry(row.get(0)?).or_default().push(AgentCost {
             agent: row.get(1)?,
@@ -254,21 +279,38 @@ pub fn daily(db: &Db, r: &PeriodRange, now: DateTime<FixedOffset>) -> anyhow::Re
     Ok(out)
 }
 
-pub fn trends(db: &Db, g: Granularity, count: u32, split: Split, now: DateTime<FixedOffset>) -> anyhow::Result<Vec<TrendBucket>> {
+pub fn trends(
+    db: &Db,
+    g: Granularity,
+    count: u32,
+    split: Split,
+    now: DateTime<FixedOffset>,
+) -> anyhow::Result<Vec<TrendBucket>> {
     if count == 0 {
         return Ok(Vec::new());
     }
     let today = now.date_naive();
     let (current, bucket_sql, label_fmt) = match g {
-        Granularity::Week => (period::week_start(today), "date(ts_ms/1000 + ?3, 'unixepoch', 'weekday 0', '-6 days')", "%Y-%m-%d"),
-        Granularity::Month => (period::month_start(today), "strftime('%Y-%m', ts_ms/1000 + ?3, 'unixepoch')", "%Y-%m"),
+        Granularity::Week => (
+            period::week_start(today),
+            "date(ts_ms/1000 + ?3, 'unixepoch', 'weekday 0', '-6 days')",
+            "%Y-%m-%d",
+        ),
+        Granularity::Month => (
+            period::month_start(today),
+            "strftime('%Y-%m', ts_ms/1000 + ?3, 'unixepoch')",
+            "%Y-%m",
+        ),
     };
     let shift = |d: NaiveDate, n: i64| match g {
         Granularity::Week => d + chrono::Duration::days(7 * n),
         Granularity::Month if n >= 0 => d + Months::new(n as u32),
         Granularity::Month => d - Months::new(n.unsigned_abs() as u32),
     };
-    let starts: Vec<NaiveDate> = (0..count as i64).rev().map(|i| shift(current, -i)).collect();
+    let starts: Vec<NaiveDate> = (0..count as i64)
+        .rev()
+        .map(|i| shift(current, -i))
+        .collect();
     let p = params![
         period::local_midnight_ms(now, starts[0]),
         period::local_midnight_ms(now, shift(current, 1)),
@@ -277,7 +319,9 @@ pub fn trends(db: &Db, g: Granularity, count: u32, split: Split, now: DateTime<F
 
     let cte = ev_cte();
     let mut totals_by: HashMap<String, Totals> = HashMap::new();
-    let sql = format!("{cte} SELECT {bucket_sql} AS b, {TOTALS_COLS} FROM ev WHERE {IN_RANGE} GROUP BY b");
+    let sql = format!(
+        "{cte} SELECT {bucket_sql} AS b, {TOTALS_COLS} FROM ev WHERE {IN_RANGE} GROUP BY b"
+    );
     let mut stmt = db.conn.prepare(&sql)?;
     let mut rows = stmt.query(p)?;
     while let Some(row) = rows.next()? {
@@ -297,7 +341,10 @@ pub fn trends(db: &Db, g: Granularity, count: u32, split: Split, now: DateTime<F
     let mut stmt = db.conn.prepare(&sql)?;
     let mut rows = stmt.query(p)?;
     while let Some(row) = rows.next()? {
-        split_by.entry(row.get(0)?).or_default().push((row.get(1)?, row.get(2)?));
+        split_by
+            .entry(row.get(0)?)
+            .or_default()
+            .push((row.get(1)?, row.get(2)?));
     }
 
     Ok(starts
@@ -321,15 +368,23 @@ pub fn projects(db: &Db, r: &PeriodRange) -> anyhow::Result<Vec<ProjectRow>> {
          FROM ev WHERE {IN_RANGE} AND project_key IS NOT NULL GROUP BY project_key ORDER BY c DESC, project_key",
         ev_cte()
     );
-    let mut fp = db.conn.prepare("SELECT DISTINCT agent FROM project_footprints WHERE project_key = ?1 ORDER BY agent")?;
+    let mut fp = db.conn.prepare(
+        "SELECT DISTINCT agent FROM project_footprints WHERE project_key = ?1 ORDER BY agent",
+    )?;
     let mut stmt = db.conn.prepare(&sql)?;
     let mut rows = stmt.query(params![r.start_ms, r.end_ms])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         let project_key: String = row.get(0)?;
-        let mut agents: Vec<String> = row.get::<_, String>(5)?.split(',').map(String::from).collect();
+        let mut agents: Vec<String> = row
+            .get::<_, String>(5)?
+            .split(',')
+            .map(String::from)
+            .collect();
         agents.sort();
-        let footprints = fp.query_map([&project_key], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+        let footprints = fp
+            .query_map([&project_key], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
         out.push(ProjectRow {
             name: project::display_name(&project_key),
             project_key,
@@ -351,7 +406,11 @@ pub fn sessions(db: &Db, f: &SessionFilter) -> anyhow::Result<Vec<SessionRow>> {
 /// Sessions in scope: those with events in the range plus not-recorded sessions updated in
 /// it (all sessions when there is no range). Token/cost columns cover in-range events only;
 /// the session's project is the one holding most of its tokens across all its events.
-fn session_rows(db: &Db, f: &SessionFilter, session_id: Option<&str>) -> anyhow::Result<Vec<SessionRow>> {
+fn session_rows(
+    db: &Db,
+    f: &SessionFilter,
+    session_id: Option<&str>,
+) -> anyhow::Result<Vec<SessionRow>> {
     let sql = format!(
         "{},
          scoped AS (SELECT * FROM ev WHERE ?1 IS NULL OR (ts_ms >= ?1 AND ts_ms < ?2)),
@@ -382,7 +441,13 @@ fn session_rows(db: &Db, f: &SessionFilter, session_id: Option<&str>) -> anyhow:
     );
     let mut stmt = db.conn.prepare(&sql)?;
     let rows = stmt.query_map(
-        params![f.range.map(|r| r.start_ms), f.range.map(|r| r.end_ms), f.agent, f.project_key, session_id],
+        params![
+            f.range.map(|r| r.start_ms),
+            f.range.map(|r| r.end_ms),
+            f.agent,
+            f.project_key,
+            session_id
+        ],
         |row| {
             let mut models: Vec<String> = row
                 .get::<_, Option<String>>(6)?
@@ -407,9 +472,19 @@ fn session_rows(db: &Db, f: &SessionFilter, session_id: Option<&str>) -> anyhow:
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-pub fn session_detail(db: &Db, agent: &str, session_id: &str) -> anyhow::Result<Option<SessionDetail>> {
-    let filter = SessionFilter { agent: Some(agent.to_string()), ..Default::default() };
-    let Some(row) = session_rows(db, &filter, Some(session_id))?.into_iter().next() else {
+pub fn session_detail(
+    db: &Db,
+    agent: &str,
+    session_id: &str,
+) -> anyhow::Result<Option<SessionDetail>> {
+    let filter = SessionFilter {
+        agent: Some(agent.to_string()),
+        ..Default::default()
+    };
+    let Some(row) = session_rows(db, &filter, Some(session_id))?
+        .into_iter()
+        .next()
+    else {
         return Ok(None);
     };
     let sql = format!(
@@ -494,8 +569,17 @@ mod tests {
     impl Default for Ev<'_> {
         fn default() -> Self {
             Ev {
-                key: "k", agent: "claude-code", session: "s1", ts: WED, cwd: Some("/r"), model: "m",
-                input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0,
+                key: "k",
+                agent: "claude-code",
+                session: "s1",
+                ts: WED,
+                cwd: Some("/r"),
+                model: "m",
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache_read: 0,
+                cache_write: 0,
             }
         }
     }
@@ -510,7 +594,15 @@ mod tests {
             .unwrap();
     }
 
-    fn price(db: &Db, model: &str, status: &str, prompt: Option<f64>, completion: Option<f64>, cr: Option<f64>, cw: Option<f64>) {
+    fn price(
+        db: &Db,
+        model: &str,
+        status: &str,
+        prompt: Option<f64>,
+        completion: Option<f64>,
+        cr: Option<f64>,
+        cw: Option<f64>,
+    ) {
         db.conn
             .execute(
                 "INSERT INTO resolved_prices(provider_hint, raw_model, status, openrouter_id, prompt, completion, cache_read, cache_write)
@@ -525,7 +617,14 @@ mod tests {
         price(db, model, "matched", Some(1e-6), Some(1e-6), None, None);
     }
 
-    fn session(db: &Db, agent: &str, id: &str, cwd: Option<&str>, updated: Option<&str>, status: &str) {
+    fn session(
+        db: &Db,
+        agent: &str,
+        id: &str,
+        cwd: Option<&str>,
+        updated: Option<&str>,
+        status: &str,
+    ) {
         db.conn
             .execute(
                 "INSERT INTO sessions(agent, session_id, cwd, title, started_ms, updated_ms, token_status) VALUES (?1,?2,?3,?4,?5,?5,?6)",
@@ -536,7 +635,10 @@ mod tests {
 
     fn cwd_project(db: &Db, cwd: &str, key: &str) {
         db.conn
-            .execute("INSERT INTO cwd_projects(cwd, project_key, is_git) VALUES (?1,?2,1)", params![cwd, key])
+            .execute(
+                "INSERT INTO cwd_projects(cwd, project_key, is_git) VALUES (?1,?2,1)",
+                params![cwd, key],
+            )
             .unwrap();
     }
 
@@ -547,8 +649,25 @@ mod tests {
     #[test]
     fn cost_uses_all_four_components() {
         let db = Db::open_in_memory().unwrap();
-        price(&db, "m", "matched", Some(1e-6), Some(2e-6), Some(1e-7), Some(1.25e-6));
-        insert(&db, Ev { input: 1000, output: 100, cache_read: 10000, cache_write: 100, ..Default::default() });
+        price(
+            &db,
+            "m",
+            "matched",
+            Some(1e-6),
+            Some(2e-6),
+            Some(1e-7),
+            Some(1.25e-6),
+        );
+        insert(
+            &db,
+            Ev {
+                input: 1000,
+                output: 100,
+                cache_read: 10000,
+                cache_write: 100,
+                ..Default::default()
+            },
+        );
         let t = totals(&db, &this_week()).unwrap();
         approx(t.cost_usd, 0.002325);
         assert_eq!((t.tokens, t.unpriced_tokens, t.events), (11200, 0, 1));
@@ -558,7 +677,14 @@ mod tests {
     fn cache_price_missing_falls_back_to_prompt() {
         let db = Db::open_in_memory().unwrap();
         price(&db, "m", "matched", Some(1e-6), Some(2e-6), None, None);
-        insert(&db, Ev { cache_read: 1000, cache_write: 500, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                cache_read: 1000,
+                cache_write: 500,
+                ..Default::default()
+            },
+        );
         approx(totals(&db, &this_week()).unwrap().cost_usd, 0.0015);
     }
 
@@ -567,10 +693,34 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         flat_price(&db, "m");
         price(&db, "u", "unknown", None, None, None, None);
-        insert(&db, Ev { key: "a", input: 10_000, ..Default::default() });
-        insert(&db, Ev { key: "b", model: "u", input: 400, output: 100, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                key: "a",
+                input: 10_000,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "b",
+                model: "u",
+                input: 400,
+                output: 100,
+                ..Default::default()
+            },
+        );
         // A model with no resolved_prices row at all is unpriced too.
-        insert(&db, Ev { key: "c", model: "never-seen", input: 7, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                key: "c",
+                model: "never-seen",
+                input: 7,
+                ..Default::default()
+            },
+        );
         let t = totals(&db, &this_week()).unwrap();
         approx(t.cost_usd, 0.01);
         assert_eq!(t.unpriced_tokens, 507);
@@ -581,7 +731,13 @@ mod tests {
     fn ignored_model_costs_zero_not_unpriced() {
         let db = Db::open_in_memory().unwrap();
         price(&db, "m", "ignored", None, None, None, None);
-        insert(&db, Ev { input: 500, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                input: 500,
+                ..Default::default()
+            },
+        );
         let t = totals(&db, &this_week()).unwrap();
         assert_eq!((t.cost_usd, t.unpriced_tokens, t.tokens), (0.0, 0, 500));
     }
@@ -590,14 +746,29 @@ mod tests {
     fn event_after_utc_evening_lands_on_next_local_day() {
         let db = Db::open_in_memory().unwrap();
         flat_price(&db, "m");
-        insert(&db, Ev { ts: "2026-11-20T18:30:00Z", input: 100, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                ts: "2026-11-20T18:30:00Z",
+                input: 100,
+                ..Default::default()
+            },
+        );
         let o = overview(&db, &PeriodSpec::ThisWeek, now()).unwrap();
         assert_eq!(o.daily.len(), 7);
         assert_eq!(o.daily[0].date, "2026-11-16");
         let sat = o.daily.iter().find(|d| d.date == "2026-11-21").unwrap();
         assert_eq!(sat.by_agent.len(), 1);
-        assert_eq!((sat.by_agent[0].agent.as_str(), sat.by_agent[0].tokens), ("claude-code", 100));
-        assert!(o.daily.iter().filter(|d| d.date != "2026-11-21").all(|d| d.by_agent.is_empty()));
+        assert_eq!(
+            (sat.by_agent[0].agent.as_str(), sat.by_agent[0].tokens),
+            ("claude-code", 100)
+        );
+        assert!(
+            o.daily
+                .iter()
+                .filter(|d| d.date != "2026-11-21")
+                .all(|d| d.by_agent.is_empty())
+        );
         let last_week = resolve(&PeriodSpec::LastWeek, now());
         assert_eq!(totals(&db, &last_week).unwrap().events, 0);
     }
@@ -606,12 +777,41 @@ mod tests {
     fn daily_reports_unpriced_tokens_per_agent() {
         let db = Db::open_in_memory().unwrap();
         flat_price(&db, "m");
-        insert(&db, Ev { key: "a", input: 1_000_000, ..Default::default() });
-        insert(&db, Ev { key: "b", model: "u", input: 300, output: 200, ..Default::default() });
-        insert(&db, Ev { key: "c", agent: "codex", model: "u", input: 50, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                key: "a",
+                input: 1_000_000,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "b",
+                model: "u",
+                input: 300,
+                output: 200,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "c",
+                agent: "codex",
+                model: "u",
+                input: 50,
+                ..Default::default()
+            },
+        );
         let days = daily(&db, &this_week(), now()).unwrap();
         let wed = days.iter().find(|d| d.date == "2026-11-18").unwrap();
-        let by: Vec<(&str, i64, i64)> = wed.by_agent.iter().map(|a| (a.agent.as_str(), a.tokens, a.unpriced_tokens)).collect();
+        let by: Vec<(&str, i64, i64)> = wed
+            .by_agent
+            .iter()
+            .map(|a| (a.agent.as_str(), a.tokens, a.unpriced_tokens))
+            .collect();
         assert_eq!(by, vec![("claude-code", 1_000_500, 500), ("codex", 50, 50)]);
         approx(wed.by_agent[0].cost_usd, 1.0);
         assert_eq!(wed.by_agent[1].cost_usd, 0.0);
@@ -621,12 +821,27 @@ mod tests {
     fn change_pct_against_previous_period() {
         let db = Db::open_in_memory().unwrap();
         flat_price(&db, "m");
-        insert(&db, Ev { key: "cur", input: 15_000_000, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                key: "cur",
+                input: 15_000_000,
+                ..Default::default()
+            },
+        );
         let o = overview(&db, &PeriodSpec::ThisWeek, now()).unwrap();
         assert_eq!(o.previous.cost_usd, 0.0);
         assert_eq!(o.change_pct, None);
 
-        insert(&db, Ev { key: "prev", ts: LAST_WED, input: 10_000_000, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                key: "prev",
+                ts: LAST_WED,
+                input: 10_000_000,
+                ..Default::default()
+            },
+        );
         let o = overview(&db, &PeriodSpec::ThisWeek, now()).unwrap();
         approx(o.totals.cost_usd, 15.0);
         approx(o.previous.cost_usd, 10.0);
@@ -639,15 +854,42 @@ mod tests {
         flat_price(&db, "m");
         cwd_project(&db, "/r/a", "/r");
         cwd_project(&db, "/r/b", "/r");
-        insert(&db, Ev { key: "1", session: "s1", cwd: Some("/r/a"), input: 100, ..Default::default() });
-        insert(&db, Ev { key: "2", session: "s2", agent: "codex", cwd: Some("/r/b"), input: 300, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                key: "1",
+                session: "s1",
+                cwd: Some("/r/a"),
+                input: 100,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "2",
+                session: "s2",
+                agent: "codex",
+                cwd: Some("/r/b"),
+                input: 300,
+                ..Default::default()
+            },
+        );
         db.conn
             .execute("INSERT INTO project_footprints(project_key, agent, marker) VALUES ('/r','codex','AGENTS.md')", [])
             .unwrap();
         let rows = projects(&db, &this_week()).unwrap();
         assert_eq!(rows.len(), 1);
         let p = &rows[0];
-        assert_eq!((p.project_key.as_str(), p.name.as_str(), p.sessions, p.tokens), ("/r", "r", 2, 400));
+        assert_eq!(
+            (
+                p.project_key.as_str(),
+                p.name.as_str(),
+                p.sessions,
+                p.tokens
+            ),
+            ("/r", "r", 2, 400)
+        );
         approx(p.cost_usd, 0.0004);
         assert_eq!(p.agents, vec!["claude-code", "codex"]);
         assert_eq!(p.footprints, vec!["codex"]);
@@ -657,9 +899,32 @@ mod tests {
     fn event_without_cwd_uses_session_cwd_for_project() {
         let db = Db::open_in_memory().unwrap();
         cwd_project(&db, "/r/a", "/r");
-        session(&db, "claude-code", "s1", Some("/r/a"), Some(WED), "recorded");
-        insert(&db, Ev { cwd: None, input: 5, ..Default::default() });
-        insert(&db, Ev { key: "orphan", session: "s9", cwd: None, input: 1, ..Default::default() });
+        session(
+            &db,
+            "claude-code",
+            "s1",
+            Some("/r/a"),
+            Some(WED),
+            "recorded",
+        );
+        insert(
+            &db,
+            Ev {
+                cwd: None,
+                input: 5,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "orphan",
+                session: "s9",
+                cwd: None,
+                input: 1,
+                ..Default::default()
+            },
+        );
         let rows = projects(&db, &this_week()).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!((rows[0].project_key.as_str(), rows[0].tokens), ("/r", 5));
@@ -672,16 +937,46 @@ mod tests {
         cwd_project(&db, "/x", "/x");
         cwd_project(&db, "/y", "/y");
         session(&db, "claude-code", "s1", Some("/x"), Some(WED), "recorded");
-        insert(&db, Ev { key: "1", cwd: Some("/x"), input: 100, ..Default::default() });
-        insert(&db, Ev { key: "2", cwd: Some("/y"), input: 150, ..Default::default() });
-        insert(&db, Ev { key: "3", cwd: Some("/y"), input: 100, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                key: "1",
+                cwd: Some("/x"),
+                input: 100,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "2",
+                cwd: Some("/y"),
+                input: 150,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "3",
+                cwd: Some("/y"),
+                input: 100,
+                ..Default::default()
+            },
+        );
         let rows = sessions(&db, &SessionFilter::default()).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].project_key.as_deref(), Some("/y"));
         assert_eq!(rows[0].tokens, 350);
-        let only_y = SessionFilter { project_key: Some("/y".into()), ..Default::default() };
+        let only_y = SessionFilter {
+            project_key: Some("/y".into()),
+            ..Default::default()
+        };
         assert_eq!(sessions(&db, &only_y).unwrap().len(), 1);
-        let only_x = SessionFilter { project_key: Some("/x".into()), ..Default::default() };
+        let only_x = SessionFilter {
+            project_key: Some("/x".into()),
+            ..Default::default()
+        };
         assert!(sessions(&db, &only_x).unwrap().is_empty());
     }
 
@@ -690,20 +985,81 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         flat_price(&db, "m");
         price(&db, "u", "unknown", None, None, None, None);
-        session(&db, "claude-code", "s1", Some("/r"), Some("2026-11-19T00:00:00+07:00"), "recorded");
-        session(&db, "copilot-cli", "nr", Some("/r"), Some("2026-11-20T00:00:00+07:00"), "not-recorded");
-        session(&db, "copilot-cli", "old", None, Some(LAST_WED), "not-recorded");
+        session(
+            &db,
+            "claude-code",
+            "s1",
+            Some("/r"),
+            Some("2026-11-19T00:00:00+07:00"),
+            "recorded",
+        );
+        session(
+            &db,
+            "copilot-cli",
+            "nr",
+            Some("/r"),
+            Some("2026-11-20T00:00:00+07:00"),
+            "not-recorded",
+        );
+        session(
+            &db,
+            "copilot-cli",
+            "old",
+            None,
+            Some(LAST_WED),
+            "not-recorded",
+        );
         session(&db, "codex", "s2", None, Some(LAST_WED), "recorded");
-        insert(&db, Ev { key: "1", model: "u", input: 40, ..Default::default() });
-        insert(&db, Ev { key: "2", model: "m", input: 1000, ..Default::default() });
-        insert(&db, Ev { key: "3", ts: LAST_WED, input: 9, ..Default::default() });
-        insert(&db, Ev { key: "4", agent: "codex", session: "s2", ts: LAST_WED, input: 9, ..Default::default() });
-        let f = SessionFilter { range: Some(this_week()), ..Default::default() };
+        insert(
+            &db,
+            Ev {
+                key: "1",
+                model: "u",
+                input: 40,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "2",
+                model: "m",
+                input: 1000,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "3",
+                ts: LAST_WED,
+                input: 9,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "4",
+                agent: "codex",
+                session: "s2",
+                ts: LAST_WED,
+                input: 9,
+                ..Default::default()
+            },
+        );
+        let f = SessionFilter {
+            range: Some(this_week()),
+            ..Default::default()
+        };
         let rows = sessions(&db, &f).unwrap();
         let ids: Vec<_> = rows.iter().map(|r| r.session_id.as_str()).collect();
         assert_eq!(ids, vec!["nr", "s1"]); // updated_ms desc
         let nr = &rows[0];
-        assert_eq!((nr.tokens, nr.token_status.as_str(), nr.models.len()), (0, "not-recorded", 0));
+        assert_eq!(
+            (nr.tokens, nr.token_status.as_str(), nr.models.len()),
+            (0, "not-recorded", 0)
+        );
         assert_eq!(nr.project_key.as_deref(), Some("/r")); // no cwd_projects row → raw session cwd
         let s1 = &rows[1];
         assert_eq!((s1.tokens, s1.unpriced_tokens), (1040, 40)); // event 3 outside the range
@@ -711,19 +1067,58 @@ mod tests {
         assert_eq!(s1.models, vec!["m", "u"]);
         assert_eq!(s1.title.as_deref(), Some("title s1"));
 
-        let codex = SessionFilter { agent: Some("codex".into()), ..Default::default() };
+        let codex = SessionFilter {
+            agent: Some("codex".into()),
+            ..Default::default()
+        };
         let rows = sessions(&db, &codex).unwrap();
-        assert_eq!(rows.iter().map(|r| r.session_id.as_str()).collect::<Vec<_>>(), vec!["s2"]);
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["s2"]
+        );
     }
 
     #[test]
     fn weekly_trend_buckets_are_mondays() {
         let db = Db::open_in_memory().unwrap();
         flat_price(&db, "m");
-        insert(&db, Ev { key: "1", agent: "codex", input: 1_000_000, ..Default::default() });
-        insert(&db, Ev { key: "2", input: 3_000_000, ..Default::default() });
-        insert(&db, Ev { key: "3", ts: "2026-11-02T00:30:00+07:00", input: 7, ..Default::default() });
-        insert(&db, Ev { key: "4", ts: "2026-11-01T23:30:00+07:00", input: 7, ..Default::default() }); // Sunday, too old
+        insert(
+            &db,
+            Ev {
+                key: "1",
+                agent: "codex",
+                input: 1_000_000,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "2",
+                input: 3_000_000,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "3",
+                ts: "2026-11-02T00:30:00+07:00",
+                input: 7,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "4",
+                ts: "2026-11-01T23:30:00+07:00",
+                input: 7,
+                ..Default::default()
+            },
+        ); // Sunday, too old
         let b = trends(&db, Granularity::Week, 3, Split::Agent, now()).unwrap();
         let labels: Vec<_> = b.iter().map(|b| b.label.as_str()).collect();
         assert_eq!(labels, vec!["2026-11-02", "2026-11-09", "2026-11-16"]);
@@ -741,9 +1136,21 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         flat_price(&db, "m");
         cwd_project(&db, "/r/a", "/r");
-        insert(&db, Ev { key: "1", cwd: Some("/r/a"), ts: "2026-10-31T23:00:00+07:00", input: 2_000_000, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                key: "1",
+                cwd: Some("/r/a"),
+                ts: "2026-10-31T23:00:00+07:00",
+                input: 2_000_000,
+                ..Default::default()
+            },
+        );
         let b = trends(&db, Granularity::Month, 2, Split::Project, now()).unwrap();
-        assert_eq!(b.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), vec!["2026-10", "2026-11"]);
+        assert_eq!(
+            b.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(),
+            vec!["2026-10", "2026-11"]
+        );
         assert_eq!(b[1].start_ms, ms("2026-11-01T00:00:00+07:00"));
         assert_eq!(b[0].by.len(), 1);
         assert_eq!(b[0].by[0].0, "/r");
@@ -756,35 +1163,96 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         flat_price(&db, "m");
         session(&db, "claude-code", "s1", Some("/r"), Some(WED), "recorded");
-        insert(&db, Ev { key: "late", ts: "2026-11-18T13:00:00+07:00", input: 2, ..Default::default() });
-        insert(&db, Ev { key: "early", ts: "2026-11-18T11:00:00+07:00", model: "u", input: 1, ..Default::default() });
-        insert(&db, Ev { key: "other", session: "s2", input: 5, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                key: "late",
+                ts: "2026-11-18T13:00:00+07:00",
+                input: 2,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "early",
+                ts: "2026-11-18T11:00:00+07:00",
+                model: "u",
+                input: 1,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "other",
+                session: "s2",
+                input: 5,
+                ..Default::default()
+            },
+        );
         let d = session_detail(&db, "claude-code", "s1").unwrap().unwrap();
         assert_eq!(d.row.session_id, "s1");
         assert_eq!(d.row.tokens, 3);
         assert_eq!(d.events.len(), 2);
         assert_eq!(d.events[0].ts_ms, ms("2026-11-18T11:00:00+07:00"));
-        assert_eq!((d.events[0].cost_usd, d.events[0].price_status.as_str()), (None, "unknown"));
+        assert_eq!(
+            (d.events[0].cost_usd, d.events[0].price_status.as_str()),
+            (None, "unknown")
+        );
         assert_eq!(d.events[1].price_status, "matched");
         approx(d.events[1].cost_usd.unwrap(), 2e-6);
         assert_eq!(d.events[1].cwd.as_deref(), Some("/r"));
-        assert!(session_detail(&db, "claude-code", "nope").unwrap().is_none());
+        assert!(
+            session_detail(&db, "claude-code", "nope")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn models_report_status_and_totals() {
         let db = Db::open_in_memory().unwrap();
         price(&db, "m", "matched", Some(1e-6), Some(2e-6), None, None);
-        insert(&db, Ev { key: "1", input: 1000, output: 500, reasoning: 200, ..Default::default() });
-        insert(&db, Ev { key: "2", model: "u", input: 10, ..Default::default() });
+        insert(
+            &db,
+            Ev {
+                key: "1",
+                input: 1000,
+                output: 500,
+                reasoning: 200,
+                ..Default::default()
+            },
+        );
+        insert(
+            &db,
+            Ev {
+                key: "2",
+                model: "u",
+                input: 10,
+                ..Default::default()
+            },
+        );
         let rows = models(&db, &this_week()).unwrap();
         assert_eq!(rows.len(), 2);
-        assert_eq!((rows[0].model.as_str(), rows[0].status.as_str()), ("m", "matched"));
+        assert_eq!(
+            (rows[0].model.as_str(), rows[0].status.as_str()),
+            ("m", "matched")
+        );
         assert_eq!(rows[0].openrouter_id.as_deref(), Some("or/m"));
-        assert_eq!((rows[0].prompt, rows[0].completion), (Some(1e-6), Some(2e-6)));
+        assert_eq!(
+            (rows[0].prompt, rows[0].completion),
+            (Some(1e-6), Some(2e-6))
+        );
         approx(rows[0].totals.cost_usd, 0.002);
-        assert_eq!((rows[0].totals.reasoning, rows[0].totals.output), (200, 500));
-        assert_eq!((rows[1].model.as_str(), rows[1].status.as_str()), ("u", "unknown"));
+        assert_eq!(
+            (rows[0].totals.reasoning, rows[0].totals.output),
+            (200, 500)
+        );
+        assert_eq!(
+            (rows[1].model.as_str(), rows[1].status.as_str()),
+            ("u", "unknown")
+        );
         assert_eq!(rows[1].totals.unpriced_tokens, 10);
     }
 
@@ -794,7 +1262,16 @@ mod tests {
         flat_price(&db, "m");
         for (i, key) in ["a", "b", "c", "d", "e", "f"].into_iter().enumerate() {
             let (cwd, sid) = (format!("/p{i}"), format!("s{i}"));
-            insert(&db, Ev { key, session: &sid, cwd: Some(&cwd), input: (i as i64 + 1) * 1000, ..Default::default() });
+            insert(
+                &db,
+                Ev {
+                    key,
+                    session: &sid,
+                    cwd: Some(&cwd),
+                    input: (i as i64 + 1) * 1000,
+                    ..Default::default()
+                },
+            );
         }
         let o = overview(&db, &PeriodSpec::ThisWeek, now()).unwrap();
         assert_eq!(o.top_projects.len(), 5);

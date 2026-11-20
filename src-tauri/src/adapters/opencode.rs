@@ -31,10 +31,21 @@ impl Adapter for OpenCodeAdapter {
 
     fn sources(&self) -> Vec<Source> {
         let path = self.db_path();
-        if path.is_file() { vec![Source { path, kind: SourceKind::Sqlite }] } else { Vec::new() }
+        if path.is_file() {
+            vec![Source {
+                path,
+                kind: SourceKind::Sqlite,
+            }]
+        } else {
+            Vec::new()
+        }
     }
 
-    fn parse(&self, src: &Source, prev: &SourceState) -> anyhow::Result<(ParseOutput, SourceState)> {
+    fn parse(
+        &self,
+        src: &Source,
+        prev: &SourceState,
+    ) -> anyhow::Result<(ParseOutput, SourceState)> {
         let conn = Connection::open_with_flags(
             &src.path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -93,14 +104,22 @@ impl Adapter for OpenCodeAdapter {
             if let Some(u) = updated {
                 max_updated = max_updated.max(u);
             }
-            let Some(v) = data.and_then(|d| serde_json::from_str::<Value>(&d).ok()) else { continue };
-            let (Some(tokens), Some(ts_ms)) =
-                (v.get("tokens").filter(|t| t.is_object()), v.pointer("/time/created").and_then(Value::as_i64))
-            else {
+            let Some(v) = data.and_then(|d| serde_json::from_str::<Value>(&d).ok()) else {
+                continue;
+            };
+            let (Some(tokens), Some(ts_ms)) = (
+                v.get("tokens").filter(|t| t.is_object()),
+                v.pointer("/time/created").and_then(Value::as_i64),
+            ) else {
                 continue;
             };
             let n = |p: &str| tokens.pointer(p).and_then(Value::as_i64).unwrap_or(0);
-            let s = |p: &str| v.pointer(p).and_then(Value::as_str).unwrap_or("").to_string();
+            let s = |p: &str| {
+                v.pointer(p)
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+            };
             events.push(UsageEvent {
                 agent: AgentKind::OpenCode,
                 event_key: format!("opencode:{id}"),
@@ -123,7 +142,9 @@ impl Adapter for OpenCodeAdapter {
         wal.push("-wal");
         let (mut size, mut mtime_ms) = (0u64, 0i64);
         for p in [src.path.clone(), PathBuf::from(wal)] {
-            let Ok(meta) = std::fs::metadata(&p) else { continue };
+            let Ok(meta) = std::fs::metadata(&p) else {
+                continue;
+            };
             size += meta.len();
             let m = meta
                 .modified()
@@ -136,7 +157,12 @@ impl Adapter for OpenCodeAdapter {
 
         Ok((
             ParseOutput { events, sessions },
-            SourceState { offset: max_updated.max(0) as u64, size, mtime_ms, context: Value::Null },
+            SourceState {
+                offset: max_updated.max(0) as u64,
+                size,
+                mtime_ms,
+                context: Value::Null,
+            },
         ))
     }
 }
@@ -166,20 +192,28 @@ mod tests {
             [],
         )
         .unwrap();
-        Source { path, kind: SourceKind::Sqlite }
+        Source {
+            path,
+            kind: SourceKind::Sqlite,
+        }
     }
 
     #[test]
     fn opencode_reads_assistant_tokens() {
         let dir = tempfile::tempdir().unwrap();
         let src = make_db(dir.path());
-        let a = OpenCodeAdapter { root: dir.path().to_path_buf() };
+        let a = OpenCodeAdapter {
+            root: dir.path().to_path_buf(),
+        };
         assert!(a.detect());
         assert_eq!(a.sources(), vec![src.clone()]);
         let (out, state) = a.parse(&src, &SourceState::default()).unwrap();
         assert_eq!(out.events.len(), 1);
         let e = &out.events[0];
-        assert_eq!((e.input, e.output, e.reasoning, e.cache_read, e.cache_write), (5603, 205, 32, 1536, 0));
+        assert_eq!(
+            (e.input, e.output, e.reasoning, e.cache_read, e.cache_write),
+            (5603, 205, 32, 1536, 0)
+        );
         assert_eq!(e.model, "gpt-5.6-luna-fast");
         assert_eq!(e.provider_hint, "openai");
         assert_eq!(e.cwd.as_deref(), Some("/tmp/oc"));
@@ -194,21 +228,28 @@ mod tests {
     fn opencode_session_title() {
         let dir = tempfile::tempdir().unwrap();
         let src = make_db(dir.path());
-        let a = OpenCodeAdapter { root: dir.path().to_path_buf() };
+        let a = OpenCodeAdapter {
+            root: dir.path().to_path_buf(),
+        };
         let (out, _) = a.parse(&src, &SourceState::default()).unwrap();
         assert_eq!(out.sessions.len(), 1);
         let s = &out.sessions[0];
         assert_eq!(s.title.as_deref(), Some("Explore repo"));
         assert_eq!(s.session_id, "ses_1");
         assert_eq!(s.cwd.as_deref(), Some("/tmp/oc"));
-        assert_eq!((s.started_ms, s.updated_ms), (Some(1795136000000), Some(1795136500000)));
+        assert_eq!(
+            (s.started_ms, s.updated_ms),
+            (Some(1795136000000), Some(1795136500000))
+        );
     }
 
     #[test]
     fn opencode_incremental_uses_time_updated() {
         let dir = tempfile::tempdir().unwrap();
         let src = make_db(dir.path());
-        let a = OpenCodeAdapter { root: dir.path().to_path_buf() };
+        let a = OpenCodeAdapter {
+            root: dir.path().to_path_buf(),
+        };
         let (first, state) = a.parse(&src, &SourceState::default()).unwrap();
         let (out, state2) = a.parse(&src, &state).unwrap();
         // Overlap window may re-emit rows, but never new event keys.
@@ -217,7 +258,10 @@ mod tests {
         }
         assert_eq!(state2.offset, state.offset);
         // Rows far older than the overlap window are not re-read.
-        let far = SourceState { offset: state.offset + 120_000, ..state.clone() };
+        let far = SourceState {
+            offset: state.offset + 120_000,
+            ..state.clone()
+        };
         let (out, state3) = a.parse(&src, &far).unwrap();
         assert!(out.events.is_empty() && out.sessions.is_empty());
         assert_eq!(state3.offset, far.offset);
@@ -227,7 +271,9 @@ mod tests {
     fn opencode_late_row_inside_overlap_is_picked_up() {
         let dir = tempfile::tempdir().unwrap();
         let src = make_db(dir.path());
-        let a = OpenCodeAdapter { root: dir.path().to_path_buf() };
+        let a = OpenCodeAdapter {
+            root: dir.path().to_path_buf(),
+        };
         let (_, state) = a.parse(&src, &SourceState::default()).unwrap();
         let c = Connection::open(&src.path).unwrap();
         let late = state.offset as i64 - 1000;
@@ -251,11 +297,20 @@ mod tests {
         c.execute("INSERT INTO session_message VALUES('m3','ses_1','assistant',3,1,1795136700000,'{\"tokens\":{\"input\":1}}')", []).unwrap();
         c.execute("INSERT INTO session_message VALUES('m4','ses_1','assistant',4,1,1795136800000,'{\"time\":{\"created\":6},\"tokens\":{\"input\":7}}')", []).unwrap();
         drop(c);
-        let a = OpenCodeAdapter { root: dir.path().to_path_buf() };
+        let a = OpenCodeAdapter {
+            root: dir.path().to_path_buf(),
+        };
         let (out, state) = a.parse(&src, &SourceState::default()).unwrap();
         assert_eq!(out.events.len(), 2);
-        let e = out.events.iter().find(|e| e.event_key == "opencode:m4").unwrap();
-        assert_eq!((e.input, e.output, e.cache_read, e.model.as_str()), (7, 0, 0, ""));
+        let e = out
+            .events
+            .iter()
+            .find(|e| e.event_key == "opencode:m4")
+            .unwrap();
+        assert_eq!(
+            (e.input, e.output, e.cache_read, e.model.as_str()),
+            (7, 0, 0, "")
+        );
         assert_eq!(state.offset, 1795136800000);
     }
 
@@ -264,7 +319,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = make_db(dir.path());
         let before = std::fs::read(&src.path).unwrap();
-        let a = OpenCodeAdapter { root: dir.path().to_path_buf() };
+        let a = OpenCodeAdapter {
+            root: dir.path().to_path_buf(),
+        };
         a.parse(&src, &SourceState::default()).unwrap();
         assert_eq!(before, std::fs::read(&src.path).unwrap());
     }
@@ -272,10 +329,14 @@ mod tests {
     #[test]
     fn opencode_detect_and_sources_when_absent() {
         let dir = tempfile::tempdir().unwrap();
-        let a = OpenCodeAdapter { root: dir.path().join("nope") };
+        let a = OpenCodeAdapter {
+            root: dir.path().join("nope"),
+        };
         assert!(!a.detect());
         assert!(a.sources().is_empty());
-        let a = OpenCodeAdapter { root: dir.path().to_path_buf() };
+        let a = OpenCodeAdapter {
+            root: dir.path().to_path_buf(),
+        };
         assert!(a.detect());
         assert!(a.sources().is_empty());
     }

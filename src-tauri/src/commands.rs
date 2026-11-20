@@ -2,7 +2,9 @@
 use crate::period::PeriodSpec;
 use crate::pricing::openrouter::fetch_models;
 use crate::pricing::{ModelOverride, PricingStatus};
-use crate::query::{Granularity, ModelRow, Overview, ProjectRow, SessionDetail, SessionRow, Split, TrendBucket};
+use crate::query::{
+    Granularity, ModelRow, Overview, ProjectRow, SessionDetail, SessionRow, Split, TrendBucket,
+};
 use crate::services::{self, emit_updated};
 use crate::settings::Settings;
 use crate::state::{DiscoveryView, SessionFilterArg};
@@ -18,7 +20,9 @@ fn err(e: anyhow::Error) -> String {
 
 /// Runs blocking command logic on Tauri's blocking thread pool, off the async workers
 /// (where e.g. `reqwest::blocking` panics). Panics and errors both become an error string.
-pub async fn run_blocking<T: Send + 'static>(f: impl FnOnce() -> anyhow::Result<T> + Send + 'static) -> CmdResult<T> {
+pub async fn run_blocking<T: Send + 'static>(
+    f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> CmdResult<T> {
     tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(|e| format!("command task failed: {e}"))?
@@ -50,7 +54,12 @@ pub async fn get_overview(app: AppHandle, period: PeriodSpec) -> CmdResult<Overv
 }
 
 #[tauri::command]
-pub async fn get_trends(app: AppHandle, granularity: Granularity, count: u32, split: Split) -> CmdResult<Vec<TrendBucket>> {
+pub async fn get_trends(
+    app: AppHandle,
+    granularity: Granularity,
+    count: u32,
+    split: Split,
+) -> CmdResult<Vec<TrendBucket>> {
     with_state(app, move |s, _| s.trends(granularity, count, split)).await
 }
 
@@ -65,7 +74,11 @@ pub async fn list_sessions(app: AppHandle, filter: SessionFilterArg) -> CmdResul
 }
 
 #[tauri::command]
-pub async fn get_session(app: AppHandle, agent: String, session_id: String) -> CmdResult<Option<SessionDetail>> {
+pub async fn get_session(
+    app: AppHandle,
+    agent: String,
+    session_id: String,
+) -> CmdResult<Option<SessionDetail>> {
     with_state(app, move |s, _| s.session(&agent, &session_id)).await
 }
 
@@ -128,7 +141,11 @@ pub async fn update_settings(app: AppHandle, s: Settings) -> CmdResult<()> {
 /// Makes the login item match `enabled`; failures are logged, not fatal.
 pub fn sync_autostart(app: &AppHandle, enabled: bool) {
     let launcher = app.autolaunch();
-    let result = if enabled { launcher.enable() } else { launcher.disable() };
+    let result = if enabled {
+        launcher.enable()
+    } else {
+        launcher.disable()
+    };
     if let Err(e) = result {
         eprintln!("autostart (enabled={enabled}): {e}");
     }
@@ -162,7 +179,11 @@ pub async fn get_discovery(app: AppHandle) -> CmdResult<DiscoveryView> {
 }
 
 #[tauri::command]
-pub async fn set_candidate_decision(app: AppHandle, path: String, decision: String) -> CmdResult<()> {
+pub async fn set_candidate_decision(
+    app: AppHandle,
+    path: String,
+    decision: String,
+) -> CmdResult<()> {
     with_state(app, move |s, app| {
         let result = s.set_candidate_decision(&path, &decision);
         // The adapter list may have changed even if the follow-up ingest failed.
@@ -174,8 +195,16 @@ pub async fn set_candidate_decision(app: AppHandle, path: String, decision: Stri
 }
 
 #[tauri::command]
-pub async fn export_csv(app: AppHandle, kind: String, period: PeriodSpec, path: String) -> CmdResult<()> {
-    with_state(app, move |s, _| s.export_csv(&kind, &period, std::path::Path::new(&path))).await
+pub async fn export_csv(
+    app: AppHandle,
+    kind: String,
+    period: PeriodSpec,
+    path: String,
+) -> CmdResult<()> {
+    with_state(app, move |s, _| {
+        s.export_csv(&kind, &period, std::path::Path::new(&path))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -200,7 +229,9 @@ mod tests {
         assert_eq!(retention_warning(20.0), None);
         assert_eq!(
             retention_warning(21.7).as_deref(),
-            Some("Aplikasi tidak berjalan 21 hari. Sesi Claude Code yang lebih tua dari 30 hari mungkin sudah terhapus sebelum sempat tercatat.")
+            Some(
+                "Aplikasi tidak berjalan 21 hari. Sesi Claude Code yang lebih tua dari 30 hari mungkin sudah terhapus sebelum sempat tercatat."
+            )
         );
     }
     #[test]
@@ -214,9 +245,13 @@ mod tests {
 
     #[test]
     fn run_blocking_maps_errors_and_panics() {
-        let e = tauri::async_runtime::block_on(run_blocking(|| -> anyhow::Result<()> { anyhow::bail!("nope") }));
+        let e = tauri::async_runtime::block_on(run_blocking(|| -> anyhow::Result<()> {
+            anyhow::bail!("nope")
+        }));
         assert_eq!(e, Err("nope".to_string()));
-        let p = tauri::async_runtime::block_on(run_blocking(|| -> anyhow::Result<()> { panic!("boom") }));
+        let p = tauri::async_runtime::block_on(run_blocking(|| -> anyhow::Result<()> {
+            panic!("boom")
+        }));
         assert!(p.is_err());
     }
 }

@@ -9,7 +9,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
-pub fn run_discovery(db: &Mutex<Db>, roots: &[PathBuf], home: &Path, known_roots: &[PathBuf], cancel: &AtomicBool) -> anyhow::Result<()> {
+pub fn run_discovery(
+    db: &Mutex<Db>,
+    roots: &[PathBuf],
+    home: &Path,
+    known_roots: &[PathBuf],
+    cancel: &AtomicBool,
+) -> anyhow::Result<()> {
     let (candidates, mut denied) = data_scan::scan_data(roots, home, known_roots, cancel);
     let (footprints, denied2) = footprint::scan_footprints(roots, home, cancel);
     denied.extend(denied2);
@@ -30,7 +36,13 @@ pub fn run_discovery(db: &Mutex<Db>, roots: &[PathBuf], home: &Path, known_roots
              known_format=excluded.known_format, file_count=excluded.file_count",
         )?;
         for c in &candidates {
-            up.execute(rusqlite::params![c.path, c.guessed_agent, c.known_format.map(|k| k.as_str()), c.file_count, now_ms])?;
+            up.execute(rusqlite::params![
+                c.path,
+                c.guessed_agent,
+                c.known_format.map(|k| k.as_str()),
+                c.file_count,
+                now_ms
+            ])?;
         }
     }
     tx.execute("DELETE FROM project_footprints", [])?;
@@ -42,7 +54,8 @@ pub fn run_discovery(db: &Mutex<Db>, roots: &[PathBuf], home: &Path, known_roots
     }
     tx.execute("DELETE FROM discovery_denied", [])?;
     {
-        let mut ins = tx.prepare("INSERT OR IGNORE INTO discovery_denied (path, found_ms) VALUES (?1, ?2)")?;
+        let mut ins =
+            tx.prepare("INSERT OR IGNORE INTO discovery_denied (path, found_ms) VALUES (?1, ?2)")?;
         for p in &denied {
             ins.execute(rusqlite::params![p.to_string_lossy(), now_ms])?;
         }
@@ -77,9 +90,12 @@ mod tests {
 
     const CLAUDE_LINE: &str = r#"{"type":"assistant","sessionId":"sess-1","cwd":"/tmp/demo","timestamp":"2026-11-20T01:00:05.000Z","uuid":"u1","requestId":"r1","message":{"id":"msg_A","model":"claude-opus-5-5","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":50}}}"#;
     const CODEX_LINES: &str = concat!(
-        r#"{"timestamp":"2026-11-20T02:00:00.000Z","type":"session_meta","payload":{"id":"cx-1","cwd":"/tmp/demo"}}"#, "\n",
-        r#"{"timestamp":"2026-11-20T02:00:01.000Z","type":"turn_context","payload":{"cwd":"/tmp/demo/sub","model":"gpt-6-sol"}}"#, "\n",
-        r#"{"timestamp":"2026-11-20T02:00:03.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"output_tokens":5}}}}"#, "\n",
+        r#"{"timestamp":"2026-11-20T02:00:00.000Z","type":"session_meta","payload":{"id":"cx-1","cwd":"/tmp/demo"}}"#,
+        "\n",
+        r#"{"timestamp":"2026-11-20T02:00:01.000Z","type":"turn_context","payload":{"cwd":"/tmp/demo/sub","model":"gpt-6-sol"}}"#,
+        "\n",
+        r#"{"timestamp":"2026-11-20T02:00:03.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"output_tokens":5}}}}"#,
+        "\n",
     );
 
     fn write(p: &std::path::Path, s: &str) {
@@ -97,18 +113,40 @@ mod tests {
     fn walk_skips_node_modules_and_caches() {
         let t = tempfile::tempdir().unwrap();
         let home = t.path();
-        for f in ["proj/a.txt", "proj/node_modules/x.txt", "Library/Caches/c.txt", "Library/Application Support/s.txt", "Library/Other/o.txt", "Library/Containers/k.txt"] {
+        for f in [
+            "proj/a.txt",
+            "proj/node_modules/x.txt",
+            "Library/Caches/c.txt",
+            "Library/Application Support/s.txt",
+            "Library/Other/o.txt",
+            "Library/Containers/k.txt",
+        ] {
             write(&home.join(f), "x");
         }
         let mut seen = Vec::new();
         let mut denied = Vec::new();
-        walk(&[home.to_path_buf()], home, &no_cancel(), &mut |e| {
-            if e.file_type().is_file() {
-                seen.push(e.path().strip_prefix(home).unwrap().to_string_lossy().into_owned());
-            }
-        }, &mut denied);
+        walk(
+            &[home.to_path_buf()],
+            home,
+            &no_cancel(),
+            &mut |e| {
+                if e.file_type().is_file() {
+                    seen.push(
+                        e.path()
+                            .strip_prefix(home)
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
+                }
+            },
+            &mut denied,
+        );
         seen.sort();
-        assert_eq!(seen, vec!["Library/Application Support/s.txt", "proj/a.txt"]);
+        assert_eq!(
+            seen,
+            vec!["Library/Application Support/s.txt", "proj/a.txt"]
+        );
         assert!(denied.is_empty());
     }
 
@@ -121,9 +159,15 @@ mod tests {
         std::os::unix::fs::symlink(t.path().join("outside"), home.join("link")).unwrap();
         let mut seen = Vec::new();
         let mut denied = Vec::new();
-        walk(&[home.clone()], &home, &no_cancel(), &mut |e| {
-            seen.push(e.file_name().to_string_lossy().into_owned());
-        }, &mut denied);
+        walk(
+            &[home.clone()],
+            &home,
+            &no_cancel(),
+            &mut |e| {
+                seen.push(e.file_name().to_string_lossy().into_owned());
+            },
+            &mut denied,
+        );
         assert!(seen.contains(&"real.txt".to_string()));
         assert!(!seen.contains(&"secret.txt".to_string()));
     }
@@ -154,8 +198,14 @@ mod tests {
         write(&home.join("alt-claude/projects/p/s.jsonl"), CLAUDE_LINE);
         let (cands, _) = scan_data(&[home.to_path_buf()], home, &[], &no_cancel());
         assert_eq!(cands.len(), 1);
-        assert_eq!(canon(std::path::Path::new(&cands[0].path)), canon(&home.join("alt-claude")));
-        assert_eq!(cands[0].known_format, Some(crate::model::AgentKind::ClaudeCode));
+        assert_eq!(
+            canon(std::path::Path::new(&cands[0].path)),
+            canon(&home.join("alt-claude"))
+        );
+        assert_eq!(
+            cands[0].known_format,
+            Some(crate::model::AgentKind::ClaudeCode)
+        );
         assert_eq!(cands[0].file_count, 1);
     }
 
@@ -164,7 +214,12 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let home = t.path();
         write(&home.join(".claude/projects/p/s.jsonl"), CLAUDE_LINE);
-        let (cands, _) = scan_data(&[home.to_path_buf()], home, &[home.join(".claude")], &no_cancel());
+        let (cands, _) = scan_data(
+            &[home.to_path_buf()],
+            home,
+            &[home.join(".claude")],
+            &no_cancel(),
+        );
         assert!(cands.is_empty());
     }
 
@@ -177,9 +232,16 @@ mod tests {
         write(&repo.join("sub/CLAUDE.md"), "x");
         write(&repo.join("AGENTS.md"), "x");
         let (fps, _) = scan_footprints(&[home.to_path_buf()], home, &no_cancel());
-        let got: BTreeSet<(String, String)> = fps.iter().map(|f| (f.project_key.clone(), f.agent.clone())).collect();
-        let want: BTreeSet<(String, String)> =
-            [(canon(&repo), "claude-code".to_string()), (canon(&repo), "codex".to_string())].into_iter().collect();
+        let got: BTreeSet<(String, String)> = fps
+            .iter()
+            .map(|f| (f.project_key.clone(), f.agent.clone()))
+            .collect();
+        let want: BTreeSet<(String, String)> = [
+            (canon(&repo), "claude-code".to_string()),
+            (canon(&repo), "codex".to_string()),
+        ]
+        .into_iter()
+        .collect();
         assert_eq!(got, want);
     }
 
@@ -206,11 +268,21 @@ mod tests {
         run_discovery(&db, &[home.to_path_buf()], home, &[], &no_cancel()).unwrap();
         {
             let g = db.lock().unwrap();
-            assert_eq!(g.conn.execute("UPDATE discovery_candidates SET decision='ignore'", []).unwrap(), 1);
+            assert_eq!(
+                g.conn
+                    .execute("UPDATE discovery_candidates SET decision='ignore'", [])
+                    .unwrap(),
+                1
+            );
         }
         run_discovery(&db, &[home.to_path_buf()], home, &[], &no_cancel()).unwrap();
         let g = db.lock().unwrap();
-        let d: String = g.conn.query_row("SELECT decision FROM discovery_candidates", [], |r| r.get(0)).unwrap();
+        let d: String = g
+            .conn
+            .query_row("SELECT decision FROM discovery_candidates", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(d, "ignore");
     }
 
@@ -221,7 +293,9 @@ mod tests {
         run_discovery(&db, &[home.to_path_buf()], home, &[], &no_cancel()).unwrap();
         let g = db.lock().unwrap();
         assert!(tracked_adapters(&g).unwrap().is_empty());
-        g.conn.execute("UPDATE discovery_candidates SET decision='track'", []).unwrap();
+        g.conn
+            .execute("UPDATE discovery_candidates SET decision='track'", [])
+            .unwrap();
         let ads = tracked_adapters(&g).unwrap();
         assert_eq!(ads.len(), 1);
         assert_eq!(ads[0].kind(), crate::model::AgentKind::ClaudeCode);
@@ -229,7 +303,10 @@ mod tests {
     }
 
     fn names(dir: &std::path::Path) -> Vec<String> {
-        let mut v: Vec<String> = fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        let mut v: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
         v.sort();
         v
     }
@@ -241,11 +318,34 @@ mod tests {
         fs::create_dir_all(home.join("repo/.git")).unwrap();
         write(&home.join("repo/CLAUDE.md"), "x");
         run_discovery(&db, &[home.to_path_buf()], home, &[], &no_cancel()).unwrap();
-        let count = |sql: &str| -> i64 { db.lock().unwrap().conn.query_row(sql, [], |r| r.get(0)).unwrap() };
-        let (f, c) = (count("SELECT COUNT(*) FROM project_footprints"), count("SELECT COUNT(*) FROM discovery_candidates"));
+        let count = |sql: &str| -> i64 {
+            db.lock()
+                .unwrap()
+                .conn
+                .query_row(sql, [], |r| r.get(0))
+                .unwrap()
+        };
+        let (f, c) = (
+            count("SELECT COUNT(*) FROM project_footprints"),
+            count("SELECT COUNT(*) FROM discovery_candidates"),
+        );
         assert!(f >= 1 && c >= 1);
-        db.lock().unwrap().conn.execute("INSERT INTO discovery_denied (path, found_ms) VALUES ('/x', 1)", []).unwrap();
-        run_discovery(&db, &[home.to_path_buf()], home, &[], &AtomicBool::new(true)).unwrap();
+        db.lock()
+            .unwrap()
+            .conn
+            .execute(
+                "INSERT INTO discovery_denied (path, found_ms) VALUES ('/x', 1)",
+                [],
+            )
+            .unwrap();
+        run_discovery(
+            &db,
+            &[home.to_path_buf()],
+            home,
+            &[],
+            &AtomicBool::new(true),
+        )
+        .unwrap();
         assert_eq!(count("SELECT COUNT(*) FROM project_footprints"), f);
         assert_eq!(count("SELECT COUNT(*) FROM discovery_candidates"), c);
         assert_eq!(count("SELECT COUNT(*) FROM discovery_denied"), 1);
@@ -257,8 +357,10 @@ mod tests {
         let p = t.path().join("w.db");
         {
             let c = rusqlite::Connection::open(&p).unwrap();
-            c.query_row("PRAGMA journal_mode=WAL", [], |r| r.get::<_, String>(0)).unwrap();
-            c.execute_batch("CREATE TABLE u(input_tokens INTEGER); INSERT INTO u VALUES (1);").unwrap();
+            c.query_row("PRAGMA journal_mode=WAL", [], |r| r.get::<_, String>(0))
+                .unwrap();
+            c.execute_batch("CREATE TABLE u(input_tokens INTEGER); INSERT INTO u VALUES (1);")
+                .unwrap();
         }
         let _ = fs::remove_file(t.path().join("w.db-shm"));
         let _ = fs::remove_file(t.path().join("w.db-wal"));
@@ -273,11 +375,19 @@ mod tests {
         let oc = t.path().join("opencode.db");
         rusqlite::Connection::open(&oc)
             .unwrap()
-            .execute_batch("CREATE TABLE session_message(id TEXT); CREATE TABLE session_v2(id TEXT);")
+            .execute_batch(
+                "CREATE TABLE session_message(id TEXT); CREATE TABLE session_v2(id TEXT);",
+            )
             .unwrap();
-        assert_eq!(sniff_file(&oc).unwrap().known_format, Some(crate::model::AgentKind::OpenCode));
+        assert_eq!(
+            sniff_file(&oc).unwrap().known_format,
+            Some(crate::model::AgentKind::OpenCode)
+        );
         let tk = t.path().join("tok.sqlite");
-        rusqlite::Connection::open(&tk).unwrap().execute_batch("CREATE TABLE m(id TEXT, total_tokens INTEGER);").unwrap();
+        rusqlite::Connection::open(&tk)
+            .unwrap()
+            .execute_batch("CREATE TABLE m(id TEXT, total_tokens INTEGER);")
+            .unwrap();
         let s = sniff_file(&tk).unwrap();
         assert_eq!(s.known_format, None);
         let plain = t.path().join("fake.db");
@@ -289,21 +399,39 @@ mod tests {
     fn scan_data_groups_codex_and_unknown_formats() {
         let t = tempfile::tempdir().unwrap();
         let home = t.path();
-        write(&home.join("alt-codex/sessions/2026/11/20/rollout-x.jsonl"), CODEX_LINES);
-        write(&home.join("misc/logs/u.jsonl"), r#"{"model":"m","usage":{"output_tokens":1}}"#);
+        write(
+            &home.join("alt-codex/sessions/2026/11/20/rollout-x.jsonl"),
+            CODEX_LINES,
+        );
+        write(
+            &home.join("misc/logs/u.jsonl"),
+            r#"{"model":"m","usage":{"output_tokens":1}}"#,
+        );
         let (cands, _) = scan_data(&[home.to_path_buf()], home, &[], &no_cancel());
         assert_eq!(cands.len(), 2);
-        let cx = cands.iter().find(|c| c.known_format == Some(crate::model::AgentKind::Codex)).unwrap();
-        assert_eq!(canon(std::path::Path::new(&cx.path)), canon(&home.join("alt-codex")));
+        let cx = cands
+            .iter()
+            .find(|c| c.known_format == Some(crate::model::AgentKind::Codex))
+            .unwrap();
+        assert_eq!(
+            canon(std::path::Path::new(&cx.path)),
+            canon(&home.join("alt-codex"))
+        );
         let un = cands.iter().find(|c| c.known_format.is_none()).unwrap();
-        assert_eq!(canon(std::path::Path::new(&un.path)), canon(&home.join("misc/logs")));
+        assert_eq!(
+            canon(std::path::Path::new(&un.path)),
+            canon(&home.join("misc/logs"))
+        );
     }
 
     #[test]
     fn scan_data_excludes_tracker_own_data_dir() {
         let t = tempfile::tempdir().unwrap();
         let home = t.path();
-        write(&home.join("Library/Application Support/AI Token Tracker/x.jsonl"), CLAUDE_LINE);
+        write(
+            &home.join("Library/Application Support/AI Token Tracker/x.jsonl"),
+            CLAUDE_LINE,
+        );
         let (cands, _) = scan_data(&[home.to_path_buf()], home, &[], &no_cancel());
         assert!(cands.is_empty());
     }

@@ -10,7 +10,12 @@ pub struct OrModel {
 }
 
 fn price(v: &serde_json::Value, key: &str) -> Option<f64> {
-    v.get(key)?.as_str()?.trim().parse::<f64>().ok().filter(|p| p.is_finite())
+    v.get(key)?
+        .as_str()?
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|p| p.is_finite())
 }
 
 /// Parses the OpenRouter `/models` body. Models whose prompt/completion price is
@@ -23,9 +28,14 @@ pub fn parse_models_json(body: &str) -> Result<Vec<OrModel>> {
         .ok_or_else(|| anyhow::anyhow!("OpenRouter response has no data array"))?;
     let mut out = Vec::new();
     for m in data {
-        let Some(id) = m.get("id").and_then(|i| i.as_str()) else { continue };
+        let Some(id) = m.get("id").and_then(|i| i.as_str()) else {
+            continue;
+        };
         let Some(pr) = m.get("pricing") else { continue };
-        let (Some(prompt), Some(completion)) = (price(pr, "prompt"), price(pr, "completion")) else { continue };
+        let (Some(prompt), Some(completion)) = (price(pr, "prompt"), price(pr, "completion"))
+        else {
+            continue;
+        };
         if prompt < 0.0 || completion < 0.0 {
             continue;
         }

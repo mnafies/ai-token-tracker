@@ -18,22 +18,33 @@ impl Adapter for GeminiAdapter {
         self.root.exists()
     }
     fn sources(&self) -> Vec<Source> {
-        let Ok(rd) = std::fs::read_dir(self.root.join("tmp")) else { return Vec::new() };
+        let Ok(rd) = std::fs::read_dir(self.root.join("tmp")) else {
+            return Vec::new();
+        };
         let mut v = Vec::new();
         for proj in rd.flatten() {
-            let Ok(files) = std::fs::read_dir(proj.path().join("chats")) else { continue };
+            let Ok(files) = std::fs::read_dir(proj.path().join("chats")) else {
+                continue;
+            };
             for f in files.flatten() {
                 let p = f.path();
                 let name = f.file_name().to_string_lossy().into_owned();
                 if p.is_file() && name.starts_with("session-") && name.ends_with(".jsonl") {
-                    v.push(Source { path: p, kind: SourceKind::Jsonl });
+                    v.push(Source {
+                        path: p,
+                        kind: SourceKind::Jsonl,
+                    });
                 }
             }
         }
         v.sort_by(|a, b| a.path.cmp(&b.path));
         v
     }
-    fn parse(&self, src: &Source, _prev: &SourceState) -> anyhow::Result<(ParseOutput, SourceState)> {
+    fn parse(
+        &self,
+        src: &Source,
+        _prev: &SourceState,
+    ) -> anyhow::Result<(ParseOutput, SourceState)> {
         // Always a full re-parse: files are small and `$set` records overwrite earlier state.
         let text = String::from_utf8_lossy(&std::fs::read(&src.path)?).into_owned();
         let meta = std::fs::metadata(&src.path)?;
@@ -54,13 +65,23 @@ impl Adapter for GeminiAdapter {
         let mut session: Option<(String, Option<i64>)> = None;
         let mut messages: Vec<Value> = Vec::new();
         for line in text.lines() {
-            let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
             if session.is_none() {
                 if let Some(id) = v.get("sessionId").and_then(Value::as_str) {
-                    session = Some((id.to_string(), v.get("startTime").and_then(Value::as_str).and_then(parse_ts)));
+                    session = Some((
+                        id.to_string(),
+                        v.get("startTime")
+                            .and_then(Value::as_str)
+                            .and_then(parse_ts),
+                    ));
                 }
             }
-            for arr in [v.get("messages"), v.pointer("/$set/messages")].into_iter().flatten() {
+            for arr in [v.get("messages"), v.pointer("/$set/messages")]
+                .into_iter()
+                .flatten()
+            {
                 if let Some(a) = arr.as_array() {
                     messages.extend(a.iter().filter(|m| m.is_object()).cloned());
                 }
@@ -68,7 +89,15 @@ impl Adapter for GeminiAdapter {
         }
 
         let Some((session_id, started_ms)) = session else {
-            return Ok((ParseOutput::default(), SourceState { offset: 0, size: meta.len(), mtime_ms, context: Value::Null }));
+            return Ok((
+                ParseOutput::default(),
+                SourceState {
+                    offset: 0,
+                    size: meta.len(),
+                    mtime_ms,
+                    context: Value::Null,
+                },
+            ));
         };
 
         // Dedupe by event key within this parse: last occurrence wins, first-seen order kept.
@@ -80,7 +109,9 @@ impl Adapter for GeminiAdapter {
             let (Some(id), Some(tokens), Some(ts_ms)) = (
                 m.get("id").and_then(Value::as_str),
                 m.get("tokens").filter(|t| t.is_object()),
-                m.get("timestamp").and_then(Value::as_str).and_then(parse_ts),
+                m.get("timestamp")
+                    .and_then(Value::as_str)
+                    .and_then(parse_ts),
             ) else {
                 continue;
             };
@@ -92,7 +123,11 @@ impl Adapter for GeminiAdapter {
                 session_id: session_id.clone(),
                 ts_ms,
                 cwd: cwd.clone(),
-                model: m.get("model").and_then(Value::as_str).unwrap_or("").to_string(),
+                model: m
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 provider_hint: "google".to_string(),
                 input: (n("input") - cached).max(0),
                 output: n("output") + thoughts,
@@ -106,7 +141,11 @@ impl Adapter for GeminiAdapter {
             }
         }
 
-        let token_status = if events.is_empty() { TokenStatus::NotRecorded } else { TokenStatus::Recorded };
+        let token_status = if events.is_empty() {
+            TokenStatus::NotRecorded
+        } else {
+            TokenStatus::Recorded
+        };
         let session_meta = SessionMeta {
             agent: AgentKind::GeminiCli,
             session_id,
@@ -117,14 +156,24 @@ impl Adapter for GeminiAdapter {
             token_status,
         };
         Ok((
-            ParseOutput { events, sessions: vec![session_meta] },
-            SourceState { offset: 0, size: meta.len(), mtime_ms, context: Value::Null },
+            ParseOutput {
+                events,
+                sessions: vec![session_meta],
+            },
+            SourceState {
+                offset: 0,
+                size: meta.len(),
+                mtime_ms,
+                context: Value::Null,
+            },
         ))
     }
 }
 
 fn parse_ts(s: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp_millis())
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.timestamp_millis())
 }
 
 #[cfg(test)]
@@ -160,7 +209,10 @@ mod tests {
         assert_eq!(out.events.len(), 1);
         let e = &out.events[0];
         assert_eq!(e.event_key, "gemini:g1:m2");
-        assert_eq!((e.input, e.cache_read, e.output, e.reasoning, e.cache_write), (600, 300, 140, 40, 0));
+        assert_eq!(
+            (e.input, e.cache_read, e.output, e.reasoning, e.cache_write),
+            (600, 300, 140, 40, 0)
+        );
         assert_eq!(e.provider_hint, "google");
         assert_eq!(e.model, "gemini-3-pro");
         assert_eq!(e.cwd.as_deref(), Some("/tmp/gem"));
@@ -173,8 +225,14 @@ mod tests {
         let chats = dir.path().join("tmp/abc/chats");
         std::fs::create_dir_all(&chats).unwrap();
         let p = chats.join("session-x.jsonl");
-        std::fs::write(&p, "{\"sessionId\":\"g2\",\"startTime\":\"2026-11-20T03:00:00.000Z\"}\n").unwrap();
-        let a = GeminiAdapter { root: dir.path().to_path_buf() };
+        std::fs::write(
+            &p,
+            "{\"sessionId\":\"g2\",\"startTime\":\"2026-11-20T03:00:00.000Z\"}\n",
+        )
+        .unwrap();
+        let a = GeminiAdapter {
+            root: dir.path().to_path_buf(),
+        };
         let s = a.sources().into_iter().next().unwrap();
         let (out, _) = a.parse(&s, &SourceState::default()).unwrap();
         assert!(out.events.is_empty());

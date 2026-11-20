@@ -1,8 +1,8 @@
 //! Background services: startup ingest, file watcher, process poll, price refresh, heartbeat.
 use crate::AppState;
-use crate::state::{lock, read};
 use crate::model::AgentKind;
 use crate::pricing::openrouter::fetch_models;
+use crate::state::{lock, read};
 use crate::watcher::spawn_watcher;
 use notify::RecommendedWatcher;
 use notify_debouncer_mini::Debouncer;
@@ -75,9 +75,11 @@ pub fn spawn_price_refresh(app: &AppHandle) {
 fn spawn(app: &AppHandle, name: &str, f: impl FnOnce(AppHandle) + Send + 'static) {
     let app = app.clone();
     let thread_name = name.to_string();
-    let spawned = std::thread::Builder::new().name(name.into()).spawn(move || {
-        run_guarded(&thread_name, || f(app));
-    });
+    let spawned = std::thread::Builder::new()
+        .name(name.into())
+        .spawn(move || {
+            run_guarded(&thread_name, || f(app));
+        });
     if let Err(e) = spawned {
         eprintln!("spawn {name}: {e}");
     }
@@ -85,7 +87,10 @@ fn spawn(app: &AppHandle, name: &str, f: impl FnOnce(AppHandle) + Send + 'static
 
 pub fn start(app: &AppHandle) {
     let (tx, rx) = channel();
-    app.manage(Watch { debouncer: Mutex::new(None), tx });
+    app.manage(Watch {
+        debouncer: Mutex::new(None),
+        tx,
+    });
     spawn(app, "ingest-worker", move |app| ingest_worker(&app, rx));
     spawn(app, "startup", |app| startup(&app));
     spawn(app, "process-poll", |app| process_poll(&app));
@@ -133,7 +138,10 @@ pub fn rewatch(app: &AppHandle) {
     *slot = None;
     match spawn_watcher(roots, move |kind| {
         if let Err(e) = tx.send(kind) {
-            eprintln!("watcher: ingest worker gone, dropping change for {}: {e}", e.0.as_str());
+            eprintln!(
+                "watcher: ingest worker gone, dropping change for {}: {e}",
+                e.0.as_str()
+            );
         }
     }) {
         Ok(d) => *slot = Some(d),
@@ -193,7 +201,9 @@ fn process_poll(app: &AppHandle) {
             Ok(false) => {}
             Err(e) => eprintln!("process poll: {e:#}"),
         });
-        std::thread::sleep(Duration::from_secs(state.settings().process_poll_secs.max(1)));
+        std::thread::sleep(Duration::from_secs(
+            state.settings().process_poll_secs.max(1),
+        ));
     }
 }
 
@@ -242,17 +252,32 @@ mod tests {
         let h = |n: u64| Duration::from_secs(n * 3600);
         assert_eq!(next_price_delay(true, Duration::ZERO), h(1));
         assert_eq!(next_price_delay(true, h(23)), h(1));
-        assert_eq!(next_price_delay(true, h(23) + Duration::from_secs(1800)), Duration::from_secs(1800));
+        assert_eq!(
+            next_price_delay(true, h(23) + Duration::from_secs(1800)),
+            Duration::from_secs(1800)
+        );
         assert_eq!(next_price_delay(true, h(24)), Duration::ZERO);
         assert_eq!(next_price_delay(true, h(30)), Duration::ZERO);
     }
 
     #[test]
     fn price_delay_after_failure_retries_within_an_hour() {
-        assert_eq!(next_price_delay(false, Duration::ZERO), Duration::from_secs(3600));
-        assert_eq!(next_price_delay(false, Duration::from_secs(1800)), Duration::from_secs(1800));
-        assert_eq!(next_price_delay(false, Duration::from_secs(3600)), Duration::ZERO);
-        assert_eq!(next_price_delay(false, Duration::from_secs(5 * 3600)), Duration::ZERO);
+        assert_eq!(
+            next_price_delay(false, Duration::ZERO),
+            Duration::from_secs(3600)
+        );
+        assert_eq!(
+            next_price_delay(false, Duration::from_secs(1800)),
+            Duration::from_secs(1800)
+        );
+        assert_eq!(
+            next_price_delay(false, Duration::from_secs(3600)),
+            Duration::ZERO
+        );
+        assert_eq!(
+            next_price_delay(false, Duration::from_secs(5 * 3600)),
+            Duration::ZERO
+        );
     }
 
     #[test]

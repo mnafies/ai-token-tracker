@@ -18,7 +18,11 @@ pub fn read_complete_lines(path: &Path, offset: u64) -> std::io::Result<(Vec<Str
             break; // EOF, possibly after a partial line
         }
         end += n as u64;
-        lines.push(String::from_utf8_lossy(&buf).trim_end_matches('\r').to_string());
+        lines.push(
+            String::from_utf8_lossy(&buf)
+                .trim_end_matches('\r')
+                .to_string(),
+        );
     }
     Ok((lines, end))
 }

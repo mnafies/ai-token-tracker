@@ -1,9 +1,9 @@
 use crate::db::Db;
 use crate::model::AgentKind;
-use serde::Serialize;
 use rusqlite::OptionalExtension;
-use std::collections::hash_map::Entry;
+use serde::Serialize;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -140,7 +140,11 @@ mod tests {
     #[test]
     fn classifies_codex_desktop() {
         assert_eq!(
-            classify("Codex", "/Applications/Codex.app/Contents/MacOS/Codex", &s(&["Codex"])),
+            classify(
+                "Codex",
+                "/Applications/Codex.app/Contents/MacOS/Codex",
+                &s(&["Codex"])
+            ),
             Some(AgentKind::Codex)
         );
     }
