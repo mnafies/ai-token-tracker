@@ -2,7 +2,8 @@ import { createContext, useContext } from "react";
 import type { Settings } from "./types";
 
 export type Page =
-  | "dashboard" | "trends" | "projects" | "sessions" | "models" | "agents" | "pricing" | "settings";
+  | "dashboard" | "trends" | "projects" | "sessions" | "models" | "agents" | "pricing" | "settings"
+  | "sessionDetail";
 
 /** Optional context for the target page, e.g. a session filter or a session to open. */
 export interface NavParams {
@@ -16,6 +17,8 @@ export interface PageProps {
   refreshKey: number;
   params: NavParams;
   navigate: (page: Page, params?: NavParams) => void;
+  /** Return to the page that opened the session detail. */
+  goBack?: () => void;
 }
 
 export const DEFAULT_SETTINGS: Settings = {

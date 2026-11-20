@@ -36,3 +36,23 @@ test("costLabel mentions unpriced", () => {
   expect(costLabel(1, 500, base)).toBe("$1.00 + 500 token tanpa harga");
   expect(costLabel(1, 0, base)).toBe("$1.00");
 });
+
+import { formatDuration } from "./format";
+test("formatDuration", () => {
+  expect(formatDuration(0, 65 * 60000)).toBe("1j 5m");
+  expect(formatDuration(0, 12 * 60000 + 5000)).toBe("12m");
+  expect(formatDuration(0, 45000)).toBe("45d");
+  expect(formatDuration(0, 3600000)).toBe("1j");
+  expect(formatDuration(null, 5)).toBe("—");
+  expect(formatDuration(5, null)).toBe("—");
+  expect(formatDuration(10, 5)).toBe("—");
+});
+
+import { formatPer1M, priceStatusLabel } from "./format";
+test("price helpers", () => {
+  expect(formatPer1M(0.000003)).toBe("$3.00");
+  expect(formatPer1M(null)).toBe("—");
+  expect(priceStatusLabel("mapped")).toBe("Dipetakan");
+  expect(priceStatusLabel("unknown")).toBe("Tidak diketahui");
+  expect(priceStatusLabel("zzz")).toBe("zzz");
+});

@@ -81,3 +81,13 @@ input[type="date"] {
   .grid-3, .grid-2 { grid-template-columns: 1fr; }
 }
 .hint { width: 100%; }
+
+.table th.sortable { cursor: pointer; user-select: none; }
+.table th.sortable:hover { color: var(--text); }
+.table tr.row-warn td { background: rgba(217, 119, 6, 0.12); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; }
+.chip button { background: none; border: 0; cursor: pointer; color: var(--muted); font: inherit; padding: 0; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); margin-right: 4px; }
+.filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.link { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+.back { align-self: flex-start; }

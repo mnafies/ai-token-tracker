@@ -89,7 +89,7 @@ export default function Dashboard({ refreshKey, navigate }: PageProps) {
             <section className="card">
               <h2>Top 5 sesi</h2>
               <DataTable rows={o.topSessions} rowKey={(r) => `${r.agent}/${r.sessionId}`}
-                onRowClick={(r) => navigate("sessions", { agent: r.agent, sessionId: r.sessionId })}
+                onRowClick={(r) => navigate("sessionDetail", { agent: r.agent, sessionId: r.sessionId })}
                 columns={[
                   { header: "Sesi", render: (r) => r.title ?? r.sessionId.slice(0, 8) },
                   { header: "Agent", render: (r) => labels.get(r.agent) ?? r.agent },

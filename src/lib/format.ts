@@ -42,3 +42,26 @@ export function formatDate(ms: number): string {
 export function formatDateTime(ms: number): string {
   return new Date(ms).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
+
+/** "1j 5m" / "12m" / "45d" (jam/menit/detik); missing or negative → "—". */
+export function formatDuration(startedMs: number | null, updatedMs: number | null): string {
+  if (startedMs == null || updatedMs == null || updatedMs < startedMs) return "—";
+  const secs = Math.floor((updatedMs - startedMs) / 1000);
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (h > 0) return m > 0 ? `${h}j ${m}m` : `${h}j`;
+  if (m > 0) return `${m}m`;
+  return `${secs}d`;
+}
+
+const PRICE_STATUS: Record<string, string> = {
+  matched: "Cocok", mapped: "Dipetakan", manual: "Manual", ignored: "Diabaikan", unknown: "Tidak diketahui",
+};
+export function priceStatusLabel(status: string): string {
+  return PRICE_STATUS[status] ?? status;
+}
+
+/** Price per 1M tokens from a per-token price, e.g. "$3.00"; missing → "—". */
+export function formatPer1M(perToken: number | null): string {
+  return perToken == null ? "—" : `$${(perToken * 1e6).toFixed(2)}`;
+}
