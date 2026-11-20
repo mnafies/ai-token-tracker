@@ -16,8 +16,17 @@ pub const DATA_UPDATED: &str = "data-updated";
 const TRAY_INTERVAL: Duration = Duration::from_secs(30);
 const HEARTBEAT: Duration = Duration::from_secs(5 * 60);
 const PRICE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
-/// How often the price loop wakes to check whether 24 h (wall clock) have passed.
+/// How often the price loop wakes to check whether its wait (wall clock) is over; also the
+/// retry delay after a failed refresh.
 const PRICE_CHECK: Duration = Duration::from_secs(60 * 60);
+
+/// How long the price loop sleeps next, `elapsed` after its last refresh attempt. A
+/// successful refresh is repeated after 24 h, a failed one after 1 h; zero means refresh now.
+/// Sleeps are capped at [`PRICE_CHECK`] so wall-clock time asleep counts toward the wait.
+pub fn next_price_delay(last_ok: bool, elapsed: Duration) -> Duration {
+    let due = if last_ok { PRICE_INTERVAL } else { PRICE_CHECK };
+    due.saturating_sub(elapsed).min(PRICE_CHECK)
+}
 
 /// Live file watcher plus the channel its callback feeds; replaced when the adapters change.
 pub struct Watch {
@@ -191,17 +200,23 @@ fn process_poll(app: &AppHandle) {
 fn price_loop(app: &AppHandle) {
     let state = app.state::<AppState>();
     loop {
+        let mut ok = false;
         run_guarded("prices", || {
             let st = state.refresh_prices(&fetch_models);
             if let Some(e) = &st.last_error {
                 eprintln!("price refresh: {e}");
             }
+            ok = st.last_error.is_none();
             emit_updated(app);
         });
-        // Wall-clock check so time spent asleep (laptop lid closed) counts toward the 24 h.
+        // Wall-clock check so time spent asleep (laptop lid closed) counts toward the wait.
         let attempted = SystemTime::now();
-        while attempted.elapsed().map_or(true, |d| d < PRICE_INTERVAL) {
-            std::thread::sleep(PRICE_CHECK);
+        loop {
+            let delay = next_price_delay(ok, attempted.elapsed().unwrap_or_default());
+            if delay.is_zero() {
+                break;
+            }
+            std::thread::sleep(delay);
         }
     }
 }
@@ -221,6 +236,24 @@ fn heartbeat(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn price_delay_after_success_waits_a_day_in_hourly_steps() {
+        let h = |n: u64| Duration::from_secs(n * 3600);
+        assert_eq!(next_price_delay(true, Duration::ZERO), h(1));
+        assert_eq!(next_price_delay(true, h(23)), h(1));
+        assert_eq!(next_price_delay(true, h(23) + Duration::from_secs(1800)), Duration::from_secs(1800));
+        assert_eq!(next_price_delay(true, h(24)), Duration::ZERO);
+        assert_eq!(next_price_delay(true, h(30)), Duration::ZERO);
+    }
+
+    #[test]
+    fn price_delay_after_failure_retries_within_an_hour() {
+        assert_eq!(next_price_delay(false, Duration::ZERO), Duration::from_secs(3600));
+        assert_eq!(next_price_delay(false, Duration::from_secs(1800)), Duration::from_secs(1800));
+        assert_eq!(next_price_delay(false, Duration::from_secs(3600)), Duration::ZERO);
+        assert_eq!(next_price_delay(false, Duration::from_secs(5 * 3600)), Duration::ZERO);
+    }
 
     #[test]
     fn run_guarded_survives_a_panic() {

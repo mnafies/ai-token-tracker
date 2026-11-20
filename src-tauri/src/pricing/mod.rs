@@ -52,7 +52,11 @@ fn store_catalog(db: &Db, models: &[OrModel], now: i64) -> Result<()> {
 }
 
 pub fn refresh_prices(db: &Mutex<Db>, fetch: &dyn Fn() -> Result<Vec<OrModel>>) -> PricingStatus {
-    let fetched = fetch();
+    // An empty catalog is never real; storing it would wipe every price.
+    let fetched = fetch().and_then(|models| match models.is_empty() {
+        true => Err(anyhow::anyhow!("OpenRouter mengembalikan katalog kosong")),
+        false => Ok(models),
+    });
     let db = db.lock().unwrap_or_else(|e| e.into_inner());
     let outcome = (|| -> Result<()> {
         match &fetched {
@@ -248,6 +252,20 @@ mod tests {
         assert_eq!(s2.fetched_ms, s1.fetched_ms);
         let db = m.lock().unwrap();
         assert_eq!(resolved(&db, "anthropic", "claude-opus-5-5").0, "matched");
+    }
+
+    #[test]
+    fn empty_catalog_is_an_error_and_keeps_old_prices() {
+        let m = Mutex::new(Db::open_in_memory().unwrap());
+        add_event(&m.lock().unwrap(), "1", "anthropic", "claude-opus-5-5");
+        let s1 = refresh_prices(&m, &|| Ok(vec![model("anthropic/claude-opus-5.5", 5e-6, 25e-6)]));
+        let s2 = refresh_prices(&m, &|| Ok(vec![]));
+        assert_eq!(s2.catalog_size, 1);
+        assert!(s2.last_error.as_deref().unwrap().contains("katalog kosong"), "{:?}", s2.last_error);
+        assert_eq!(s2.fetched_ms, s1.fetched_ms);
+        let db = m.lock().unwrap();
+        assert_eq!(resolved(&db, "anthropic", "claude-opus-5-5").0, "matched");
+        assert!(db.get_meta("prices_last_error").unwrap().unwrap().contains("katalog kosong"));
     }
 
     #[test]
