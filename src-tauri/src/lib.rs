@@ -118,7 +118,10 @@ pub fn run() {
                 let enabled = app.state::<AppState>().settings().launch_at_login;
                 commands::sync_autostart(app.handle(), enabled);
             }
-            tray::setup_tray(app.handle())?;
+            // The window and background services still work without a menu bar item.
+            if let Err(e) = tray::setup_tray(app.handle()) {
+                eprintln!("tray setup: {e}");
+            }
             services::start(app.handle());
             Ok(())
         })

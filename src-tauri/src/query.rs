@@ -192,11 +192,16 @@ pub fn totals(db: &Db, r: &PeriodRange) -> anyhow::Result<Totals> {
     Ok(db.conn.query_row(&sql, params![r.start_ms, r.end_ms], |row| read_totals(row, 0))?)
 }
 
+/// Cost change from `prev` to `cur` in percent; `None` when there was no previous cost.
+pub fn change_pct(cur: f64, prev: f64) -> Option<f64> {
+    (prev != 0.0).then(|| (cur - prev) / prev * 100.0)
+}
+
 pub fn overview(db: &Db, spec: &PeriodSpec, now: DateTime<FixedOffset>) -> anyhow::Result<Overview> {
     let range = period::resolve(spec, now);
     let cur = totals(db, &range)?;
     let prev = totals(db, &period::previous(spec, now))?;
-    let change_pct = (prev.cost_usd != 0.0).then(|| (cur.cost_usd - prev.cost_usd) / prev.cost_usd * 100.0);
+    let change_pct = change_pct(cur.cost_usd, prev.cost_usd);
     let mut top_projects = projects(db, &range)?;
     top_projects.truncate(5);
     let mut top_sessions = sessions(db, &SessionFilter { range: Some(range), ..Default::default() })?;
