@@ -1,0 +1,2 @@
+{"sessionId":"g1","projectHash":"abc","startTime":"2026-11-20T03:00:00.000Z","lastUpdated":"2026-11-20T03:05:00.000Z","kind":"main"}
+{"$set":{"messages":[{"id":"m1","timestamp":"2026-11-20T03:00:10.000Z","type":"user","content":"hi"},{"id":"m2","timestamp":"2026-11-20T03:00:12.000Z","type":"gemini","model":"gemini-3-pro","tokens":{"input":900,"output":100,"cached":300,"thoughts":40,"tool":0,"total":1040}}]}}
